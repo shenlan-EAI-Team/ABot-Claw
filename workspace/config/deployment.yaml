@@ -1,0 +1,40 @@
+version: 2
+project: abotclaw-g1
+
+robot:
+  id: g1_001
+  type: unitree_g1
+  base_url: http://192.168.31.171:8888
+  sdk_network_interface: enP8p1s0
+
+pc:
+  host: 192.168.31.190
+  robot_route_interface: eno1
+
+services:
+  spatial_memory:
+    url: http://192.168.31.190:8022
+    required: true
+  yolo:
+    url: http://192.168.31.190:8013
+    required: false
+  face:
+    url: http://192.168.31.190:8016
+    required: false
+  anygrasp:
+    url: http://192.168.31.190:8015
+    required: true
+    optional: false
+
+execution:
+  lease_holder_prefix: openclaw-g1
+  request_timeout_s: 10
+  result_poll_interval_s: 2
+  max_plan_runtime_s: 240
+  navigation_timeout_s: 75
+  face_wait_timeout_s: 30
+  code_overhead_s: 25
+
+acceptance:
+  navigation_position_tolerance_m: 0.20
+  navigation_yaw_tolerance_rad: 0.175

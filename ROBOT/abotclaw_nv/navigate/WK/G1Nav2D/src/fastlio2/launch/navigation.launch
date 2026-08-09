@@ -1,0 +1,31 @@
+<launch>
+    <node pkg="tf" type="static_transform_publisher" name="base_to_body" args="0.0 0 0.0 3.1416 3.1416 0 /body /base_link 1" /> 
+    <include file="$(find livox_ros_driver2)/launch_ROS1/msg_MID360.launch">
+    </include>
+    <rosparam command="load" file="$(find fastlio)/config/localize.yaml" />
+    <node pkg="fastlio" type="localizer_node" name="localizer_node" output="screen"/>
+    <node pkg="fastlio" type="slam_reloc.py" name="slam_reloc" output="screen">
+        <param name="pcd_path" value="/home/unitree/abotclaw_nv/navigate/map/map.pcd" />
+    </node>
+    <include file="$(find fastlio)/launch/gridmap_load.launch">
+            <arg name="rviz" value="false"/>
+    </include>
+    <include file="$(find tool)/launch/downsample_pointcloud.launch">
+        <arg name="pcd_file" value="/home/unitree/abotclaw_nv/navigate/map/ground_map.pcd"/>
+    </include>
+    
+    <node pkg="tf" type="static_transform_publisher" name="slam_odom_to_odom" 
+        args="0 0 0 0 0 0 /slam_odom /odom 100" />
+
+    <include file="$(find xju_pnc)/launch/move_base.launch">
+        <arg name="pnc_rviz" value="true"/>
+    </include>
+
+    <include file="$(find pointcloud_to_laserscan)/launch/point_to_scan.launch" />
+
+    <include file="$(find tool)/launch/body2any_pointcloud.launch">
+    </include>
+
+    <include file="$(find velocity_smoother_ema)/launch/velocity_smoother_ema.launch">
+    </include>
+</launch>

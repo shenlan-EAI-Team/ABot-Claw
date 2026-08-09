@@ -1,0 +1,2 @@
+"""VisualPlaceRecognition test package."""
+

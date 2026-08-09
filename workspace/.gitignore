@@ -1,0 +1,5 @@
+memory/*.md
+!memory/.gitkeep
+*.pyc
+__pycache__/
+config/deployment.local.yaml

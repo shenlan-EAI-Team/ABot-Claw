@@ -1,0 +1,8 @@
+prefix=/home/unitree/abotclaw_nv/navigate/WK/G1Nav2D/devel
+
+Name: fastlio
+Description: Description of fastlio
+Version: 0.0.0
+Cflags: -I/home/unitree/abotclaw_nv/navigate/WK/G1Nav2D/devel/include
+Libs: -L${prefix}/lib 
+Requires: 

@@ -1,0 +1,12 @@
+# ninja log v5
+0	8859	1785826910760603474	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/ball_query.o	88f09a780d1c2554
+0	8953	1785826910855605930	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/interpolate.o	6d7d5514faef6ce0
+8954	17783	1785826919684834324	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/bindings.o	510f0dc50b22474
+8861	18424	1785826920321850814	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/ball_query_gpu.o	ec65ceaf9800aa3d
+17783	26550	1785826928453061457	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/cylinder_query.o	190c2bd3d4b63e5f
+18424	27962	1785826929861097959	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/cylinder_query_gpu.o	b2b79d0f5c2d3fc8
+26550	35505	1785826937405293677	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/group_points.o	1d8ed0df8efd931
+27962	37483	1785826939380344953	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/group_points_gpu.o	f32da69386efba8e
+35505	45482	1785826947381552836	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/interpolate_gpu.o	3ec599b01b0739d2
+37483	46427	1785826948327577432	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/sampling.o	e0c7f92bddebd254
+45483	55262	1785826957159807227	/services/GraspAnything/build_pointnet2_sm86/build/temp.linux-x86_64-cpython-311/pointnet2/_ext_src/src/sampling_gpu.o	f211611edf1a4bfb

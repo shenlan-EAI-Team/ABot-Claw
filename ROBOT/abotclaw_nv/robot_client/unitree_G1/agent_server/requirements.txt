@@ -1,0 +1,45 @@
+# Unitree G1 Agent Server Requirements
+# 依赖包版本已锁定实际安装环境，与 g1_agent conda 环境一致
+#
+# ⚠️  注意：以下依赖为系统级，需独立安装，不通过 pip：
+#   ROS 1 Noetic   → sudo apt install ros-noetic-desktop-full
+#   (提供 rospy, actionlib, tf, move_base_msgs 等)
+
+# Web framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Unitree SDK2（需先安装 CycloneDDS 并 source config.env，见 docs/G1_Agent_Server_环境配置与使用方法.md）
+# CYCLONEDDS_HOME=~/cyclonedds/install pip install -e /path/to/unitree_sdk2_python
+# -e /home/xxuz/ABot-Claw/unitree_sdk2_python  # 注释：本地路径，需按实际路径修改
+-e /home/unitree/abotclaw_nv/unitree_sdk2_python
+
+# ROS 1 Noetic（导航用，已在 /opt/ros/noetic 中，无需 pip）
+# rospy, actionlib, tf, move_base_msgs, nav_msgs 由系统包提供
+# rospkg 由 ROS Noetic 提供（conda 环境中缺失，需 pip 安装）
+rospkg>=1.4.0
+
+# Trajectory planning (for dual-arm motion)
+ruckig>=0.14.0
+
+# HTTP client for perception services
+httpx>=0.25.0
+requests>=2.32.0
+
+# Utilities
+python-multipart>=0.0.6
+pydantic>=2.5.0
+pillow>=9.0.0
+pyyaml>=6.0
+
+# OpenCV + numpy（视觉处理）
+opencv-python>=4.8.0
+
+# ZMQ（与 G1 D455 相机 ZMQ 推流连接）
+pyzmq>=26.0.0
+
+# Mujoco（位置/姿态相关计算）
+mujoco>=3.8.0
+
+# Format saved /code/execute scripts (PEP 8)
+black>=24.3.0

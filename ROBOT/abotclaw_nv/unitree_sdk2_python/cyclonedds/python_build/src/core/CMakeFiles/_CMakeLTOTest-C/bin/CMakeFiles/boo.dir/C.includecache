@@ -1,0 +1,10 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/unitree/abotclaw_nv/unitree_sdk2_python/cyclonedds/python_build/src/core/CMakeFiles/_CMakeLTOTest-C/src/main.c
+

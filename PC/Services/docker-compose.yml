@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  services:
+    image: services-all-in-one:latest
+    container_name: services-all-in-one
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+      # Proxy (optional — set on host or pass via .env)
+      - https_proxy=${https_proxy:-}
+      - http_proxy=${http_proxy:-}
+      - all_proxy=${all_proxy:-}
+    # Ports: YOLO 8013, face_recognition 8016, SpatialMemory 8022, GraspAnything 8015
+    # (not needed when using host network mode — ports bind directly to host)
+    network_mode: "host"
+    volumes:
+      # Services directory mounted read-only — code, models, data live here
+      - /home/xxuz/abotclaw_pack/abotclaw_robot_final/PC/Services:/services:ro
+    # Health check on the first service to report container health
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8013/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    shm_size: 2gb

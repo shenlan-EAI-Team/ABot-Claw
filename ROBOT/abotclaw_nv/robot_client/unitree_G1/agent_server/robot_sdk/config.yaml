@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# 本文件为默认配置；所有 IP / 端口均支持环境变量覆盖（通过 ${ENV_VAR} 语法）：
+#   G1_ROBOT_IP        → g1.robot_ip（机器人本体）
+#   D435I_HOST         → g1.d435i_host（D435i TCP 推流，默认同 G1_ROBOT_IP）
+#   FACE_CAMERA_HOST   → face.camera_host（人脸识别相机）
+#   SPATIAL_MEMORY_URL → spatial_memory.url（空间记忆服务）
+#   YOLO_URL           → yolo.url（YOLO 检测服务）
+#   VISION_BASE_URL    → vision.base_url（VL 场景描述）
+#
+# 以上环境变量由项目根目录 config.env 统一导出，yaml 无需硬编码 IP。
+# ---------------------------------------------------------------------------
+
+# 机器人本体
+g1:
+  robot_ip: "${G1_ROBOT_IP}"
+  d435i_host: "${D435I_HOST}"
+  d435i_port: 8765
+
+# # 人脸服务（HTTP）；camera_host 缺省时使用 G1_ROBOT_IP（见 face_sdk）
+# face:
+#   url: "http://127.0.0.1:8016"
+#   request_timeout: 10.0
+#   threshold: 0.45
+#   camera_host: "${FACE_CAMERA_HOST}"
+
+# # Spatial Memory Hub
+# spatial_memory:
+#   url: "http://127.0.0.1:8022"
+#   request_timeout: 10.0
+
+# # YOLO HTTP（子进程仍可读 YOLO_URL；此处为服务端/文档默认）
+# yolo:
+#   url: "http://127.0.0.1:8013/detect"
+#   conf_thres: 0.5
+#   iou_thres: 0.45
+#   request_timeout: 10.0
+
+# # Vision（多模态 VL 场景描述）—— 兼容任何 OpenAI VL 接口
+# vision:
+#   base_url: "http://localhost:9988/v1"       # MoonPalace 代理；换模型时改成对应 base_url
+#   model: "kimi-k2.6"                         # 任何支持 image_url 的模型 ID
+#   # api_key: "sk-xxx"                        # 不填则自动从 ~/.openclaw/openclaw.json 读取
+#   timeout: 90.0
+#   max_side: 512                              # 图片缩放最大边长（控制 payload）
+#   default_prompt: "请用中文详细描述这张图片中的场景，包括人物、物体、环境和正在发生的事情。"
+# 人脸服务（HTTP）；camera_host 缺省时使用 G1_ROBOT_IP（见 face_sdk）
+face:
+  url: "http://192.168.123.222:8016"
+  request_timeout: 10.0
+  threshold: 0.45
+  camera_host: "${FACE_CAMERA_HOST}"
+
+# Spatial Memory Hub
+spatial_memory:
+  url: "http://192.168.123.222:8022"
+  request_timeout: 10.0
+
+# YOLO HTTP（子进程仍可读 YOLO_URL；此处为服务端/文档默认）
+yolo:
+  url: "http://192.168.123.222:8013/detect"
+  conf_thres: 0.5
+  iou_thres: 0.45
+  request_timeout: 10.0
+
+# GraspAnything HTTP（GRASPANYTHING_URL 环境变量覆盖，默认 127.0.0.1:8015）
+graspanything:
+  url: "http://192.168.123.222:8015/grasp/detect"
+  request_timeout: 30.0
+
+# Vision（多模态 VL 场景描述）—— 兼容任何 OpenAI VL 接口
+vision:
+  base_url: "http://localhost:9988/v1"       # MoonPalace 代理；换模型时改成对应 base_url
+  model: "kimi-k2.6"                         # 任何支持 image_url 的模型 ID
+  # api_key: "sk-xxx"                        # 不填则自动从 ~/.openclaw/openclaw.json 读取
+  timeout: 90.0
+  max_side: 512                              # 图片缩放最大边长（控制 payload）
+  default_prompt: "请用中文详细描述这张图片中的场景，包括人物、物体、环境和正在发生的事情。"

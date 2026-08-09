@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "robot": "g1_001",
+  "skill_count": 10,
+  "skills": [
+    "abotclaw-robot-hardware",
+    "abotclaw-robot-connection",
+    "abotclaw-sdk-discovery",
+    "abotclaw-active-services",
+    "abotclaw-memory",
+    "abotclaw-remember-location",
+    "abotclaw-navigate-to-location",
+    "abotclaw-run-robot-task",
+    "abotclaw-progress-critic",
+    "abotclaw-bundle"
+  ],
+  "forbidden_patterns": [
+    "visitor-reception skill",
+    "face-recognition skill",
+    "speak skill",
+    "task-specific skill"
+  ]
+}

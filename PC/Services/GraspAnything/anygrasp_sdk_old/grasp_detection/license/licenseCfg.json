@@ -1,0 +1,14 @@
+{
+    "version": "3.1.0",
+    "feature_id": "4970440311135991862",
+    "public_key": "YaoLiu.public_key",
+    "signature": "YaoLiu.signature",
+    "license": "YaoLiu.lic",
+    "toolbox": [
+        {
+            "name": "Basic",
+            "type": "PERMANENT",
+            "data": ""
+        }
+    ]
+}

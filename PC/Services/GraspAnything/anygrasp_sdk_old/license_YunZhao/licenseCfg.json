@@ -1,0 +1,14 @@
+{
+    "version": "3.1.0",
+    "feature_id": "N19849019749268855954",
+    "public_key": "YunZhao.public_key",
+    "signature": "YunZhao.signature",
+    "license": "YunZhao.lic",
+    "toolbox": [
+        {
+            "name": "Basic",
+            "type": "PERMANENT",
+            "data": ""
+        }
+    ]
+}

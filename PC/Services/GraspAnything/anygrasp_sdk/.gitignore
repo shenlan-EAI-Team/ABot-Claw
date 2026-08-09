@@ -1,0 +1,10 @@
+**/__pycache__/**
+**/*.egg-info/
+*.o
+*.so
+*.egg
+*.tar
+.DS_Store
+build/
+.TimeRecord
+license*

@@ -1,0 +1,5 @@
+numpy
+Pillow
+scipy
+tqdm
+open3d

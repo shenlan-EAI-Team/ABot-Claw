@@ -1,0 +1,45 @@
+#!/bin/bash
+# ifconfig wrapper: converts `ip addr` output to ifconfig-like format for AnyGrasp SDK
+
+INTERFACE="${1:-}"
+OUTPUT_FORMAT=""
+
+if [[ -z "$INTERFACE" ]]; then
+    # No interface specified - list all
+    ip -brief addr show | while IFS= read -r line; do
+        IFACE=$(echo "$line" | awk '{print $1}')
+        STATE=$(echo "$line" | awk '{print $2}')
+        IP=$(echo "$line" | awk '{print $3}' | head -1)
+        if [[ "$STATE" == "UP" ]]; then
+            MAC=$(cat /sys/class/net/${IFACE}/address 2>/dev/null)
+            MTU=$(cat /sys/class/net/${IFACE}/mtu 2>/dev/null)
+            echo "$IFACE: flags=$((0x43))<UP,RUNNING>  mtu $MTU"
+            if [[ -n "$MAC" ]]; then
+                echo "        ether $MAC  txqueuelen 1000  (Ethernet)"
+            fi
+            if [[ -n "$IP" ]]; then
+                echo "        inet $IP"
+            fi
+        fi
+    done
+else
+    # Specific interface
+    IP=$(ip -4 addr show "$INTERFACE" 2>/dev/null | grep inet | awk '{print $2}' | head -1)
+    MAC=$(cat /sys/class/net/${INTERFACE}/address 2>/dev/null)
+    MTU=$(cat /sys/class/net/${INTERFACE}/mtu 2>/dev/null)
+    STATE=$(ip link show "$INTERFACE" 2>/dev/null | grep -oP 'state \K\w+')
+    FLAGS="<UP"
+    if [[ "$STATE" == "UNKNOWN" ]] || [[ "$STATE" == "DORMANT" ]]; then
+        FLAGS="<UNKNOWN"
+    else
+        FLAGS="<UP,RUNNING"
+    fi
+
+    echo "$INTERFACE: flags=4163$FLAGS>  mtu ${MTU:-1500}"
+    if [[ -n "$MAC" ]]; then
+        echo "        ether $MAC  txqueuelen 1000  (Ethernet)"
+    fi
+    if [[ -n "$IP" ]]; then
+        echo "        inet $IP"
+    fi
+fi

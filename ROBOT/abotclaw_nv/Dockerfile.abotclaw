@@ -1,0 +1,61 @@
+# =============================================================================
+# AbotClaw Docker Image
+# Base: Ubuntu 20.04 + ROS1 Noetic + Miniconda
+# =============================================================================
+
+FROM ubuntu:20.04
+
+SHELL ["/bin/bash", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TERM=xterm-256color
+
+# ----- ROS Noetic Installation (using Tsinghua mirror) -----
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg2 \
+    lsb-release \
+    && curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://mirrors.tuna.tsinghua.edu.cn/ros/ubuntu/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros1.list \
+    && apt-get update \
+    && apt-get install -y ros-noetic-ros-base ros-noetic-navigation ros-noetic-octomap-server \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Source ROS in every bash session
+RUN echo "source /opt/ros/noetic/setup.bash" >> /etc/bash.bashrc
+RUN echo "source /home/unitree/abotclaw_nv/navigate/WK/G1Nav2D/devel/setup.bash" >> /etc/bash.bashrc
+RUN echo "export PROJECT_ROOT=/home/unitree/abotclaw_nv" >> /etc/bash.bashrc
+
+# ----- Miniconda Setup (ARM64) -----
+ENV MINICONDA_VERSION="Miniconda3-py39_4.12.0-Linux-aarch64.sh"
+ENV MINICONDA_URL="https://repo.anaconda.com/miniconda/${MINICONDA_VERSION}"
+ENV MINICONDA_HOME="/opt/miniconda3"
+ENV PATH="${MINICONDA_HOME}/bin:${PATH}"
+
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL "${MINICONDA_URL}" -o /tmp/miniconda.sh && \
+    bash /tmp/miniconda.sh -b -p "${MINICONDA_HOME}" && \
+    rm /tmp/miniconda.sh && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN echo "" >> /etc/bash.bashrc && \
+    echo "# >>> miniconda3 init >>>" >> /etc/bash.bashrc && \
+    echo "export CONDA_AUTO_ACTIVATE_BASE=false" >> /etc/bash.bashrc && \
+    echo ". /opt/miniconda3/etc/profile.d/conda.sh" >> /etc/bash.bashrc && \
+    echo "# <<< miniconda3 init <<<" >> /etc/bash.bashrc && \
+    echo "" >> /etc/bash.bashrc
+
+WORKDIR /home/unitree/abotclaw_nv
+
+# ----- g1_agent conda environment -----
+COPY requirements_abotclaw.txt /tmp/requirements_abotclaw.txt
+RUN conda create -n g1_agent python=3.10 -y && \
+    conda run -n g1_agent pip install --no-cache-dir -r /tmp/requirements_abotclaw.txt
+
+# ----- linkerhand conda environment -----
+COPY requirements_linkerhand.txt /tmp/requirements_linkerhand.txt
+RUN conda create -n linkerhand python=3.10 -y && \
+    conda run -n linkerhand pip install --no-cache-dir -r /tmp/requirements_linkerhand.txt
+
+CMD ["/bin/bash"]

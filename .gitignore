@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs
+logs/
+*.log
+code_executions/
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# Environment/config secrets
+.env
+*.env
+config.env
+
+# Docker
+*.tar
+
+# Cache
+.cache/
+.cache
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+# Large archives
+*.tar.gz
+
+# Model cache
+model_cache/
+
+# Logs
+log/
+checkpoint/
+checkpoints/
+
+# Python environments
+**/.venv/
+**/venv/
+# workspace runtime memory
+workspace/memory/
+# IDE
+.marscode/
+
+# Docker build context
+.docker_context/

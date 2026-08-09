@@ -1,0 +1,112 @@
+name: 📊 记录仓库流量数据
+
+on:
+  schedule:
+    # 每周日晚上 23:45 运行
+    - cron: "45 23 * * 0"
+  # 允许手动触发
+  workflow_dispatch:
+
+jobs:
+  record-traffic:
+    name: 获取流量数据并保存到私有仓库
+    runs-on: ubuntu-latest
+
+    steps:
+      # 获取当前时间
+      - name: 获取当前日期
+        id: date
+        run: echo "DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      # 使用 API 获取流量数据
+      - name: 获取 WK 仓库的流量数据
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          # 获取浏览量数据（包含 views 和 unique visitors）
+          curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/traffic/views \
+            > views.json
+          
+          # 获取克隆数数据（包含 clones 和 unique cloners）
+          curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/${{ github.repository }}/traffic/clones \
+            > clones.json
+
+      # 克隆私有数据仓库
+      - name: 克隆私有数据仓库
+        env:
+          GH_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        run: |
+          git clone https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository_owner }}/traffic-data.git
+
+      # 保存数据到私有仓库，并提取四个关键指标
+      - name: 保存流量数据
+        run: |
+          cd traffic-data
+          
+          # 创建按仓库名分类的目录
+          mkdir -p wk
+          
+          # 保存原始 JSON 数据（完整数据）
+          cp ../views.json wk/views-${{ steps.date.outputs.DATE }}.json
+          cp ../clones.json wk/clones-${{ steps.date.outputs.DATE }}.json
+          
+          # 保存 latest 副本
+          cp ../views.json wk/views-latest.json
+          cp ../clones.json wk/clones-latest.json
+          
+          # 提取四个关键指标到 CSV 文件（方便查看）
+          # views-latest.json 包含: count(总浏览量), uniques(独立访客)
+          # clones-latest.json 包含: count(总克隆数), uniques(独立克隆者)
+          
+          # 创建汇总 CSV（如果不存在则创建表头）
+          if [ ! -f wk/summary.csv ]; then
+            echo "日期,总浏览量,独立访客,总克隆数,独立克隆者" > wk/summary.csv
+          fi
+          
+          # 提取数据并追加到 CSV
+          VIEWS_COUNT=$(jq -r '.count' ../views.json)
+          VIEWS_UNIQUES=$(jq -r '.uniques' ../views.json)
+          CLONES_COUNT=$(jq -r '.count' ../clones.json)
+          CLONES_UNIQUES=$(jq -r '.uniques' ../clones.json)
+          
+          echo "${{ steps.date.outputs.DATE }},$VIEWS_COUNT,$VIEWS_UNIQUES,$CLONES_COUNT,$CLONES_UNIQUES" >> wk/summary.csv
+          
+          # 同时保存一个只包含四个指标的 JSON 文件
+          cat > wk/metrics-${{ steps.date.outputs.DATE }}.json << EOF
+          {
+            "date": "${{ steps.date.outputs.DATE }}",
+            "views": {
+              "total": $VIEWS_COUNT,
+              "unique_visitors": $VIEWS_UNIQUES
+            },
+            "clones": {
+              "total": $CLONES_COUNT,
+              "unique_cloners": $CLONES_UNIQUES
+            }
+          }
+          EOF
+          
+          # 更新 latest 指标文件
+          cp wk/metrics-${{ steps.date.outputs.DATE }}.json wk/metrics-latest.json
+          
+          # 配置 git
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          
+          # 提交并推送
+          git add .
+          git commit -m "记录 WK 仓库流量 - ${{ steps.date.outputs.DATE }}" || echo "无变化"
+          git push
+
+      # 清理临时文件
+      - name: 清理
+        run: |
+          rm -f views.json clones.json

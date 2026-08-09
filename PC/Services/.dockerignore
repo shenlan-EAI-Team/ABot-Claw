@@ -1,0 +1,47 @@
+# ============================================================
+# Docker Build Context: /home/xxuz/Services
+# Keep only what's needed; exclude everything else
+# ============================================================
+
+# Skip this file itself and the Dockerfile
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Logs, pids, temp files
+logs/
+.pids/
+*.log
+*.log.*
+*.tmp
+
+# Model files (downloaded at runtime)
+*.pt
+*.pt.bak
+*.pt.broken
+*.pt.partial
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+start_services.sh
+stop_services.sh
+README.md
+YOLO_USAGE.md
+
+# System files
+.DS_Store
+Thumbs.db
+.env
+.env.*

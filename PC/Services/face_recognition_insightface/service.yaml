@@ -1,0 +1,15 @@
+name: face-recognition-service
+version: 0.1.0
+description: InsightFace HTTP face recognition service for enrollment and single-image inference
+
+requires:
+  gpu: true
+  ram_gb: 4
+
+deploy:
+  image: abotclaw/face-recognition-service:0.1.0
+  port: 8016
+  health: /health
+  ready_timeout: 180
+
+client: test_api.py
