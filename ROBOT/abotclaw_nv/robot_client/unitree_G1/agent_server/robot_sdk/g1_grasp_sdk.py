@@ -51,6 +51,9 @@ _Q_I = np.array([0.0, 0.0, 0.0, 1.0], dtype=float)
 # IK / ``move_to_waypoint`` 使用与 MuJoCo 一致的 torso 系末端目标；将用户给出的 z 减去该值，对齐到 torso。
 _GRASP_REF_BASE_BELOW_TORSO_Z_M: float = 0.044
 
+# 抓取后仅小幅抬高右手，便于 VLAC 在目标仍处于 D435i 视野时取得 After。
+_VLAC_VERIFY_LIFT_Z_M: float = 0.04
+
 
 def _wp(rp, rq, lp, lq) -> dict:
     return {
@@ -195,7 +198,11 @@ class _G1LiftController:
             return False
         return self._move_wp(_NAMED_WAYPOINTS[waypoint_name])
 
-    def execute_grasp_sequence(self, target_waypoint: Optional[dict] = None) -> bool:
+    def execute_grasp_sequence(
+        self,
+        target_waypoint: Optional[dict] = None,
+        after_lift_callback: Optional[Callable[[], None]] = None,
+    ) -> bool:
         if not self._check_init():
             return False
         try:
@@ -224,6 +231,15 @@ class _G1LiftController:
             step(4, "Grasp")
             self._hand(self.config.grasp_command)
             time.sleep(self.config.post_grasp_delay)
+
+            print("\n[Grasp Sequence] Step 4.5: Small lift for VLAC verification")
+            verify_wp = _copy_waypoint(wp)
+            verify_wp["right_pos"][2] += _VLAC_VERIFY_LIFT_Z_M
+            if not self._move_wp(verify_wp):
+                return False
+
+            if after_lift_callback is not None:
+                after_lift_callback()
 
             step(5, "Return to lift_return position")
             if not self.move_to_named_waypoint("lift_return"):
@@ -348,6 +364,7 @@ def grasp_target(
     left_pos: Sequence[float] = ([0.05, 0.242, 0.10]),
     *,
     robot_ip: Optional[str] = None,
+    after_lift_callback: Optional[Callable[[], None]] = None,
 ) -> bool:
     """对外唯一接口：给定左右末端目标位置 (m)，执行完整抓取序列。
 
@@ -358,13 +375,20 @@ def grasp_target(
         right_pos: 右手末端位置，长度 3。
         left_pos: 左手末端位置，长度 3；默认 ``(0.001, 0.212, -0.204)``。
         robot_ip: 灵巧手所在机器人 IP。
+        after_lift_callback: VLAC 验证小幅抬升成功后调用的可选回调。
 
     Returns:
         序列是否全部成功。
     """
     wp = _waypoint_from_positions(right_pos, left_pos)
     cfg = _GraspConfig(robot_ip=robot_ip or get_g1_robot_ip())
-    return _with_controller(cfg, lambda c: c.execute_grasp_sequence(wp))
+    return _with_controller(
+        cfg,
+        lambda c: c.execute_grasp_sequence(
+            wp,
+            after_lift_callback=after_lift_callback,
+        ),
+    )
 
 
 def detect_grasp_target(

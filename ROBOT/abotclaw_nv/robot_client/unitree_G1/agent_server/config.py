@@ -75,24 +75,14 @@ class TimingConfig:
     layers are visible.  Constants flow into the SDK subprocess via env vars
     (see CodeExecutor._create_temp_file).
 
-    Timeout budget for a single blocking SDK call
-    ──────────────────────────────────────────────
-    ┌─ code_execution_timeout_s (300 s) ──────────────────────────────┐
-    │  ┌─ motion_timeout_s (30 s) ─────────────────────────────────┐  │
-    │  │  interpolation (2–15 s auto-calc)                         │  │
-    │  │  ── then ──                                               │  │
-    │  │  settle_timeout_s (3 s)  ← converge or raise ArmError    │  │
-    │  └───────────────────────────────────────────────────────────┘  │
-    │                                                                 │
-    │  Lease keeps alive while robot moves (movement detection).      │
-    │  If arm is stuck and not moving:                                │
-    │    settle_timeout_s (3 s) fires BEFORE lease_idle_timeout_s     │
-    │    (15 s), so code gets a clean ArmError.                       │
-    │                                                                 │
-    │  ┌─ lease_idle_timeout_s (15 s) ──┐                             │
-    │  │  lease revoked, code killed    │                             │
-    │  └────────────────────────────────┘                             │
-    └─────────────────────────────────────────────────────────────────┘
+    Current /code/execute timing relationship:
+    - lease_max_duration_s: 180 s hard ownership cap.
+    - code_execution_timeout_s: 180 s subprocess timeout.
+    - motion_timeout_s: 30 s per blocking arm motion.
+    - settle_timeout_s: 3 s post-interpolation convergence window.
+    - lease_idle_timeout_s: 60 s, used only while a lease is HELD with
+      no bound /code/execute task. Once execution is bound, the code timeout
+      and lease hard cap govern its lifetime.
 
     Command rates
     ─────────────

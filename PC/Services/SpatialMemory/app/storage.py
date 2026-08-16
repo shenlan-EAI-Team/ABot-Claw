@@ -138,6 +138,38 @@ class SqliteStore:
             rows = conn.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
+    def get_memory_by_id(self, memory_id: str) -> Optional[dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM memories WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def update_memory_extra_key(self, memory_id: str, key: str, value: Any) -> bool:
+        """Atomically update one top-level extra key while preserving all other keys."""
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT extra_json FROM memories WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                return False
+
+            try:
+                extra = json.loads(row["extra_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                extra = {}
+            if not isinstance(extra, dict):
+                extra = {}
+
+            extra[key] = value
+            conn.execute(
+                "UPDATE memories SET extra_json = ? WHERE id = ?",
+                (json.dumps(extra), memory_id),
+            )
+            return True
+
     def create_task(self, payload: dict[str, Any]) -> None:
         with self._lock, self._connect() as conn:
             conn.execute(

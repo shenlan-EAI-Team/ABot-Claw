@@ -1,7 +1,7 @@
 """G1 Robot SDK — 与 arm_piper 的 ``robot_sdk`` 契约对齐（文档 + 懒加载导出）。
 
 ``/code/execute`` 子进程由 ``robot_sdk.code_execute_bootstrap`` 注入 ``G1RobotEnv`` 实例为 ``env``，
-并保留 ``camera``、``camera_d435i``、``yolo``、``grasp_target``、``memory``、``face``、``tts`` 及可调用懒代理 ``Nav2Anywhere`` 等兼容别名。
+并保留 ``camera``、``camera_d435i``、``yolo``、``vlac``、``grasp_target``、``grasp_with_vlac``、``memory``、``face``、``tts`` 及可调用懒代理 ``Nav2Anywhere`` 等兼容别名。
 网络与 HTTP 默认值来自本目录 ``config.yaml``，环境变量 ``ROBOT_SDK_CONFIG`` 可覆盖路径（与 Piper 一致）。
 
 包内实现为平铺模块；顶层 ``from robot_sdk import FaceSDK`` 等使用 ``__getattr__`` 懒加载，
@@ -17,6 +17,8 @@ __all__ = [
     "G1D435iCamera",
     "G1RobotEnv",
     "grasp_target",
+    "grasp_with_vlac",
+    "VLACSDK",
     "HandClient",
     "send_hand_command",
     "HAND_COMMANDS",
@@ -98,6 +100,14 @@ def __getattr__(name: str) -> Any:
         from .g1_grasp_sdk import grasp_target
 
         return grasp_target
+    if name == "grasp_with_vlac":
+        from .g1_robot_env import grasp_with_vlac
+
+        return grasp_with_vlac
+    if name == "VLACSDK":
+        from .vlac_sdk import VLACSDK
+
+        return VLACSDK
     if name == "HandClient":
         from .hand_sdk import HandClient
 

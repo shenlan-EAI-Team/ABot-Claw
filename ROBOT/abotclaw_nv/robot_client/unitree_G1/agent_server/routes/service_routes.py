@@ -491,11 +491,21 @@ async function sendCommand(cmd) {
     if (cmd === "stand") code = "env.stand()";
     else if (cmd === "sit") code = "env.sit()";
     else if (cmd === "walk") code = "env.walk(0.3, 0, 0); import time; time.sleep(3); env.stop_movement()";
-    await fetch("/code/execute", {
+    const execRes = await fetch("/code/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Lease-Id": leaseId },
       body: JSON.stringify({ code: code, timeout: 30 }),
     });
+    if (execRes.ok) {
+      // /code/execute is asynchronous. Keep ownership until the accepted
+      // execution has actually finalized; releasing immediately would request
+      // cancellation of the bound task under the lease lifecycle contract.
+      for (let i = 0; i < 35; i++) {
+        const st = await (await fetch("/code/status")).json();
+        if (!st.is_running) break;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
     await fetch("/lease/release", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lease_id: leaseId }) });
   } catch (e) { console.error(e); }
   finally { if (btn) btn.disabled = false; }

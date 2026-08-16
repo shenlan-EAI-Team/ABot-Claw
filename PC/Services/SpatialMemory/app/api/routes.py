@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
 from app.schemas import (
     GenericResultsResponse,
@@ -13,8 +14,16 @@ from app.schemas import (
     SemanticTextQuery,
     TaskCreateRequest,
     UnifiedQuery,
+    VisualIndexUpdateRequest,
 )
-from app.services.memory_service import MemoryService
+from app.services.memory_service import (
+    MemoryService,
+    PlaceImageDecodeError,
+    PlaceImageHashConflictError,
+    PlaceImageNotFoundError,
+    PlaceImageSaveError,
+    PlaceNotFoundError,
+)
 from app.services.task_service import TaskService
 
 
@@ -31,7 +40,41 @@ def create_router(memory_service: MemoryService, task_service: TaskService) -> A
 
     @router.post("/memory/place/upsert")
     def upsert_place(req: PlaceMemoryUpsertRequest) -> dict:
-        return memory_service.upsert_place(req)
+        try:
+            return memory_service.upsert_place(req)
+        except PlaceImageDecodeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except PlaceImageSaveError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @router.get("/memory/place/{place_id}")
+    def get_place(place_id: str) -> dict:
+        try:
+            return memory_service.get_place(place_id)
+        except PlaceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/memory/place/{place_id}/image")
+    def get_place_image(place_id: str) -> FileResponse:
+        try:
+            path, image_sha256 = memory_service.get_place_image(place_id)
+        except (PlaceNotFoundError, PlaceImageNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(
+            path,
+            media_type="image/jpeg",
+            filename=f"{place_id}.jpg",
+            headers={"ETag": f'"{image_sha256}"'},
+        )
+
+    @router.patch("/memory/place/{place_id}/visual-index")
+    def update_place_visual_index(place_id: str, req: VisualIndexUpdateRequest) -> dict:
+        try:
+            return memory_service.update_place_visual_index(place_id, req)
+        except PlaceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PlaceImageHashConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post("/memory/semantic/ingest")
     def ingest_semantic(req: SemanticFrameIngestRequest) -> dict:

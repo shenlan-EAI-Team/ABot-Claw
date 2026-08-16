@@ -1,0 +1,19 @@
+# core (from pyproject.toml)
+torch==2.6.0
+torchvision==0.21.0
+ms-swift==3.3
+transformers==4.51.3
+peft==0.15.2
+opencv-python==4.11.0.86
+loguru
+timm
+sentencepiece==0.1.99
+# Optional acceleration. The service automatically falls back to eager attention.
+# Install flash-attn separately only when its build CUDA matches the target image.
+# flash-attn
+
+# api service
+fastapi
+uvicorn
+pydantic
+python-multipart

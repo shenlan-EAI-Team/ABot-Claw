@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Pose(BaseModel):
@@ -48,6 +48,55 @@ class PlaceMemoryUpsertRequest(BaseModel):
     alias: list[str] = Field(default_factory=list)
     note: str = ""
     timestamp: Optional[float] = None
+    image: Optional[str] = Field(
+        default=None,
+        description="Reference image encoded as base64/data-uri/path/url",
+    )
+    image_captured_at: Optional[float] = Field(
+        default=None,
+        description="Unix timestamp when the reference image was captured",
+    )
+    task_description: str = Field(
+        default="",
+        description="Description of the place or future visual arrival-verification task",
+    )
+
+
+VisualIndexStatus = Literal["not_indexed", "pending", "indexed", "failed", "deleted"]
+
+
+class VisualIndexUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: VisualIndexStatus
+    image_id: Optional[str] = None
+    image_sha256: Optional[str] = None
+    backend: Optional[str] = Field(default=None, max_length=100)
+    version: Optional[str] = Field(default=None, max_length=100)
+    error: Optional[str] = Field(default=None, max_length=1000)
+
+    @field_validator("image_sha256")
+    @classmethod
+    def validate_image_sha256(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.lower()
+        if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
+            raise ValueError("image_sha256 must be a 64-character hexadecimal SHA-256")
+        return normalized
+
+    @field_validator("image_id", "backend", "version")
+    @classmethod
+    def reject_blank_strings(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not value.strip():
+            raise ValueError("value must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_indexed_metadata(self) -> "VisualIndexUpdateRequest":
+        if self.status == "indexed" and (not self.backend or not self.version):
+            raise ValueError("backend and version are required when status is indexed")
+        return self
 
 
 class SemanticFrameIngestRequest(BaseModel):
@@ -132,6 +181,11 @@ class MemoryResult(BaseModel):
     timestamp: float
     confidence: float
     evidence: dict[str, Any] = Field(default_factory=dict)
+    place_id: Optional[str] = None
+    image_id: Optional[str] = None
+    image_sha256: Optional[str] = None
+    image_url: Optional[str] = None
+    visual_index: Optional[dict[str, Any]] = None
 
 
 class GenericResultsResponse(BaseModel):

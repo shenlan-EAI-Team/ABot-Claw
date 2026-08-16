@@ -22,6 +22,8 @@ class Lease:
     granted_at: float
     last_cmd_at: float
     rewind_on_release: bool = False  # if True, rewind trajectory before going home
+    execution_id: str | None = None
+    ending_reason: str | None = None
 
 
 @dataclass
@@ -58,6 +60,12 @@ class LeaseManager:
         self._reset_task: asyncio.Task | None = None
         self._on_lease_end_async: Callable[[bool], Awaitable[None]] | None = None
         self._on_lease_start: Callable[[], None] | None = None
+        # Execution lifecycle callbacks are injected by server.py.  LeaseManager
+        # deliberately does not import routes/code_executor: it only coordinates
+        # the execution bound to the current lease.
+        self._is_execution_active: Callable[[str], bool] | None = None
+        self._stop_execution: Callable[[str, str], bool] | None = None
+        self._execution_stop_tasks: set[asyncio.Task] = set()
 
     @property
     def current_lease(self) -> Lease | None:
@@ -80,10 +88,30 @@ class LeaseManager:
         """
         self._on_lease_start = callback
 
+    def set_execution_callbacks(
+        self,
+        is_active: Callable[[str], bool],
+        stop: Callable[[str, str], bool],
+    ) -> None:
+        """Bind LeaseManager to the single CodeExecutor without importing it.
+
+        A bound lease is kept until ``finish_execution`` is called.  Release
+        and watchdog expiry request a stop first; they never grant the next
+        lease while the old execution is still finalizing.
+        """
+        self._is_execution_active = is_active
+        self._stop_execution = stop
+
     async def start(self) -> None:
         self._task = asyncio.create_task(self._check_loop())
 
     async def stop(self) -> None:
+        for task in list(self._execution_stop_tasks):
+            task.cancel()
+        if self._execution_stop_tasks:
+            await asyncio.gather(*self._execution_stop_tasks, return_exceptions=True)
+        self._execution_stop_tasks.clear()
+
         if self._reset_task and not self._reset_task.done():
             self._reset_task.cancel()
             try:
@@ -112,6 +140,14 @@ class LeaseManager:
                 return self._grant(holder, rewind_on_release=rewind_on_release)
             # Already holder?
             if self._current and self._current.holder == holder:
+                if self._current.ending_reason:
+                    return {
+                        "status": "ending",
+                        "lease_id": self._current.lease_id,
+                        "execution_id": self._current.execution_id,
+                        "reason": self._current.ending_reason,
+                        "remaining_s": self._remaining(),
+                    }
                 return {
                     "status": "already_held",
                     "lease_id": self._current.lease_id,
@@ -203,24 +239,137 @@ class LeaseManager:
         return {"status": "cancelled"}
 
     async def release(self, lease_id: str) -> dict:
+        execution_id: str | None = None
+        should_stop = False
         async with self._lock:
             if self._current and self._current.lease_id == lease_id:
-                rewind = self._current.rewind_on_release
-                self._current = None
-                if self._cfg.reset_on_release and self._on_lease_end_async:
-                    self._resetting = True
-                    self._reset_task = asyncio.create_task(
-                        self._do_reset_and_grant(reason="released", rewind=rewind)
-                    )
-                    return {"status": "released", "resetting": True}
+                # A running/bound task must finish before the lease becomes
+                # free.  Mark the lease as ending, request a stop outside the
+                # lock, and let run_code.finally -> finish_execution() perform
+                # the actual release.
+                if self._current.execution_id is not None:
+                    execution_id = self._current.execution_id
+                    if self._current.ending_reason is None:
+                        self._current.ending_reason = "released"
+                        should_stop = True
                 else:
-                    self._try_grant_next()
-                    return {"status": "released", "resetting": False}
-            return {"status": "not_found"}
+                    rewind = self._current.rewind_on_release
+                    self._finalize_release_locked(reason="released", rewind=rewind)
+                    return {"status": "released", "resetting": self._resetting}
+            else:
+                return {"status": "not_found"}
+
+        if execution_id is not None:
+            if should_stop:
+                self._schedule_execution_stop(execution_id, reason="released")
+            return {
+                "status": "stopping",
+                "execution_id": execution_id,
+                "resetting": False,
+            }
+        return {"status": "not_found"}
+
+    async def bind_execution(self, lease_id: str, execution_id: str) -> bool:
+        """Atomically bind one accepted execution to the current lease."""
+        async with self._lock:
+            if not self._current or self._current.lease_id != lease_id:
+                return False
+            if self._current.ending_reason is not None:
+                return False
+            if self._current.execution_id is not None:
+                return False
+            self._current.execution_id = execution_id
+            self._current.last_cmd_at = time.time()
+            return True
+
+    async def finish_execution(self, lease_id: str, execution_id: str) -> dict:
+        """Release a lease only after its bound execution has fully returned."""
+        async with self._lock:
+            if not self._current or self._current.lease_id != lease_id:
+                return {"status": "not_found"}
+            if self._current.execution_id != execution_id:
+                return {"status": "execution_mismatch"}
+
+            reason = self._current.ending_reason or "execution_finished"
+            rewind = self._current.rewind_on_release
+            self._finalize_release_locked(reason=reason, rewind=rewind)
+            return {
+                "status": "released",
+                "reason": reason,
+                "resetting": self._resetting,
+            }
+
+    async def request_execution_stop(self, lease_id: str, reason: str = "manual") -> dict:
+        """Move a bound lease to ENDING and request its exact execution to stop."""
+        execution_id: str | None = None
+        should_stop = False
+        async with self._lock:
+            if not self._current or self._current.lease_id != lease_id:
+                return {"status": "not_found"}
+            if self._current.execution_id is None:
+                return {"status": "no_execution"}
+
+            execution_id = self._current.execution_id
+            if self._current.ending_reason is None:
+                self._current.ending_reason = reason
+                should_stop = True
+
+        if should_stop:
+            self._schedule_execution_stop(execution_id, reason=reason)
+            return {"status": "stopping", "execution_id": execution_id}
+        return {
+            "status": "already_stopping",
+            "execution_id": execution_id,
+            "reason": self._current.ending_reason if self._current else reason,
+        }
+
+    def _finalize_release_locked(self, reason: str, rewind: bool) -> None:
+        """Clear the current lease; caller must hold ``self._lock``."""
+        self._current = None
+        if self._cfg.reset_on_release and self._on_lease_end_async:
+            self._resetting = True
+            self._reset_task = asyncio.create_task(
+                self._do_reset_and_grant(reason=reason, rewind=rewind)
+            )
+        else:
+            self._try_grant_next()
+
+    def _schedule_execution_stop(self, execution_id: str, reason: str) -> None:
+        """Request a bound execution stop without blocking the event loop."""
+        if self._stop_execution is None:
+            logger.error(
+                "Lease %s needs execution %s stopped (%s), but no stop callback is configured",
+                self._current.lease_id if self._current else "?",
+                execution_id,
+                reason,
+            )
+            return
+
+        async def _stop() -> None:
+            try:
+                stopped = await asyncio.to_thread(self._stop_execution, execution_id, reason)
+                if not stopped and self._is_execution_active and self._is_execution_active(execution_id):
+                    logger.error(
+                        "Failed to stop active execution %s for lease end (%s)",
+                        execution_id,
+                        reason,
+                    )
+            except Exception:
+                logger.exception("Execution stop callback failed for %s", execution_id)
+
+        task = asyncio.create_task(_stop())
+        self._execution_stop_tasks.add(task)
+        task.add_done_callback(self._execution_stop_tasks.discard)
 
     async def extend(self, lease_id: str) -> dict:
         async with self._lock:
             if self._current and self._current.lease_id == lease_id:
+                if self._current.ending_reason is not None:
+                    return {
+                        "status": "ending",
+                        "reason": self._current.ending_reason,
+                        "remaining_s": self._remaining(),
+                    }
                 self._current.last_cmd_at = time.time()
                 return {"status": "extended", "remaining_s": self._remaining()}
             return {"status": "not_found"}
@@ -239,12 +388,21 @@ class LeaseManager:
             if had_lease:
                 self._revoke("queue_cleared")
 
-            logger.info("Cleared queue (%d removed), revoked lease: %s",
-                         removed, had_lease)
+            lease_revoked = had_lease and self._current is None
+            lease_ending = bool(
+                had_lease and self._current and self._current.ending_reason
+            )
+            logger.info(
+                "Cleared queue (%d removed), lease_revoked=%s lease_ending=%s",
+                removed,
+                lease_revoked,
+                lease_ending,
+            )
             return {
                 "status": "cleared",
                 "removed": removed,
-                "lease_revoked": had_lease,
+                "lease_revoked": lease_revoked,
+                "lease_ending": lease_ending,
                 "resetting": self._resetting,
             }
 
@@ -254,7 +412,11 @@ class LeaseManager:
             self._current.last_cmd_at = time.time()
 
     def validate_lease(self, lease_id: str) -> bool:
-        return self._current is not None and self._current.lease_id == lease_id
+        return (
+            self._current is not None
+            and self._current.lease_id == lease_id
+            and self._current.ending_reason is None
+        )
 
     def status(self) -> dict:
         # Build queue list with ticket IDs
@@ -280,6 +442,12 @@ class LeaseManager:
             }
         return {
             "holder": self._current.holder,
+            "lease_id": self._current.lease_id,
+            "execution_id": self._current.execution_id,
+            "state": "ending" if self._current.ending_reason else (
+                "running" if self._current.execution_id else "held"
+            ),
+            "ending_reason": self._current.ending_reason,
             "remaining_s": self._remaining(),
             "queue_length": len(self._queue),
             "queue": queue_list,
@@ -349,31 +517,27 @@ class LeaseManager:
     def _revoke(self, reason: str) -> None:
         if not self._current:
             return
+        # If an execution is bound, do not make the robot lease-free yet.
+        # Stop it first and wait for run_code.finally -> finish_execution().
+        if self._current.execution_id is not None:
+            if self._current.ending_reason is None:
+                self._current.ending_reason = reason
+                self._schedule_execution_stop(self._current.execution_id, reason)
+            logger.info(
+                "Lease ending for %s: %s (waiting for execution %s)",
+                self._current.holder,
+                reason,
+                self._current.execution_id,
+            )
+            return
         rewind = self._current.rewind_on_release
         logger.info("Lease revoked from %s: %s", self._current.holder, reason)
-        self._current = None
-        if self._cfg.reset_on_release and self._on_lease_end_async:
-            self._resetting = True
-            self._reset_task = asyncio.create_task(
-                self._do_reset_and_grant(reason=reason, rewind=rewind)
-            )
-        else:
-            self._try_grant_next()
+        self._finalize_release_locked(reason=reason, rewind=rewind)
 
     async def _do_reset_and_grant(self, reason: str = "released", rewind: bool = False) -> None:
         """Reset robot to home, optionally rewinding trajectory first."""
         try:
             logger.info("Lease ended — resetting robot to home (reason: %s, rewind: %s)", reason, rewind)
-
-            # Stop any running code execution
-            try:
-                from routes.code_routes import get_executor
-                executor = get_executor()
-                if executor.is_running:
-                    logger.info("Stopping running code execution before reset (reason: %s)", reason)
-                    executor.stop(reason=reason)
-            except Exception as e:
-                logger.warning("Failed to stop code executor: %s", e)
 
             # Perform reset (rewind + go home, or just go home)
             await self._on_lease_end_async(rewind)
@@ -426,9 +590,21 @@ class LeaseManager:
                 if not self._current or self._resetting:
                     continue
 
+                # A stop has already been requested. Keep ownership pinned to
+                # this execution until finish_execution() performs final release.
+                if self._current.ending_reason is not None:
+                    continue
+
                 # Hard max duration
                 if now - self._current.granted_at >= self._cfg.max_duration_s:
                     self._revoke("max_duration")
+                    continue
+
+                # Once /code/execute has been accepted, execution lifetime is
+                # governed by CodeExecutor timeout + the hard lease deadline.
+                # HTTP/arm-motion idle heuristics must not revoke a valid
+                # long-running navigation or grasp task halfway through.
+                if self._current.execution_id is not None:
                     continue
 
                 # Idle check — revoke immediately after timeout

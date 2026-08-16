@@ -11,11 +11,21 @@ description: Compose multiple verified G1 primitives into one conditional sequen
 - `navigate`：导航到某地点
 - `face_wait`：等待指定人或任一已知人脸
 - `speak`：TTS
-- `detect_object`：D455 前向检测
-- `grasp`：D435i 抓取
+- `detect_object`：使用 D455 的通用前向目标检测；它不是抓取前置步骤，除非用户任务明确要求单独进行前向目标检测。
+- `grasp`：抓取内部使用斜向下 D435i 获取目标 RGB/Depth，并通过 AnyGrasp 生成抓取位姿；默认调用 `grasp_something`。
+- `grasp` 显式设置 `use_vlac: true` 时调用 `grasp_with_vlac`；抓取执行和 VLAC Before / After 评估均使用 D435i，返回 `execution_success + reward + done`。
 - `release`：释放物体
 - `wait`：短时等待
 
+## 抓取任务约束
+
+对于 `grasp`：
+
+1. 不要为了抓取任务自动插入 `detect_object` 步骤。
+2. 不要使用 D455 的检测结果判断 D435i 抓取目标是否存在。
+3. `grasp_something` / `grasp_with_vlac` 会在 Robot 端自行使用 D435i + AnyGrasp 完成抓取目标检测和位姿生成。
+4. 当 `execution_success=false` 且没有明确错误字段时，不得猜测为“D455 未检测到瓶子”或“AnyGrasp 未生成姿态”。
+5. 此时应返回“抓取阶段失败，需查看 Robot Agent Server 底层抓取日志”。
 ## 执行方法
 
 1. 将用户任务转换为 JSON plan。

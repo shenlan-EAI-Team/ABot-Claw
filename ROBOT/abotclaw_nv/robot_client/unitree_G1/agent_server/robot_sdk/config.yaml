@@ -6,6 +6,7 @@
 #   SPATIAL_MEMORY_URL → spatial_memory.url（空间记忆服务）
 #   YOLO_URL           → yolo.url（YOLO 检测服务）
 #   VISION_BASE_URL    → vision.base_url（VL 场景描述）
+#   VLAC_URL           → vlac.url（PC 端视觉 Critic）
 #
 # 以上环境变量由项目根目录 config.env 统一导出，yaml 无需硬编码 IP。
 # ---------------------------------------------------------------------------
@@ -45,26 +46,37 @@ g1:
 #   default_prompt: "请用中文详细描述这张图片中的场景，包括人物、物体、环境和正在发生的事情。"
 # 人脸服务（HTTP）；camera_host 缺省时使用 G1_ROBOT_IP（见 face_sdk）
 face:
-  url: "http://192.168.123.222:8016"
+  url: "http://192.168.31.190:8016"
   request_timeout: 10.0
   threshold: 0.45
   camera_host: "${FACE_CAMERA_HOST}"
 
 # Spatial Memory Hub
 spatial_memory:
-  url: "http://192.168.123.222:8022"
+  url: "http://192.168.31.190:8022"
   request_timeout: 10.0
 
+# Visual Place Recognition
+vpr:
+  url: "http://192.168.31.190:8030"
+  request_timeout: 10.0
+
+# Visual Language Action Critic
+
+vlac:
+  url: "${VLAC_URL}"
+  request_timeout: 120.0
+  
 # YOLO HTTP（子进程仍可读 YOLO_URL；此处为服务端/文档默认）
 yolo:
-  url: "http://192.168.123.222:8013/detect"
+  url: "http://192.168.31.190:8013/detect"
   conf_thres: 0.5
   iou_thres: 0.45
   request_timeout: 10.0
 
 # GraspAnything HTTP（GRASPANYTHING_URL 环境变量覆盖，默认 127.0.0.1:8015）
 graspanything:
-  url: "http://192.168.123.222:8015/grasp/detect"
+  url: "http://192.168.31.190:8015/grasp/detect"
   request_timeout: 30.0
 
 # Vision（多模态 VL 场景描述）—— 兼容任何 OpenAI VL 接口

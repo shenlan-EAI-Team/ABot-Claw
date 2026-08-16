@@ -19,7 +19,9 @@
 | TTS | `tts.initialize()` 后 `tts.speak(text)` |
 | 前向检测 | D455：`camera.get_frame()` + `yolo.detect_on_rgb(rgb)` |
 | 抓取检测 | D435i：`yolo.detect_env()` / `grasp_something(name)` |
+| 抓取并视觉验收 | `grasp_with_vlac(name, task_description=...)` |
 | 释放 | `release_object()` 或 `release_something()` |
+| 视觉地点识别 | VPR：`vpr.search(image_path)` |
 
 不在此表中的方法视为未知，才调用 `sdk-discovery`。
 
@@ -61,9 +63,12 @@ POST /lease/acquire
 - `camera_d435i`
 - `yolo`
 - `memory`
+- `vpr`
+- `vlac`
 - `env`
 - `Pose`
 - `grasp_something(name)`
+- `grasp_with_vlac(name, task_description=...)`：共享 D435i Before/After，返回 `execution_success`、`reward`、`done`
 - `grasp_target(...)`
 - `release_object()`
 - `release_something()`

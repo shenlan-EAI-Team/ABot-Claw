@@ -64,7 +64,12 @@ curl -s http://localhost:8888/code/status
 - 停止当前代码：`POST /code/stop`（需 header `X-Lease-Id`）。
 - 释放租约：`POST /lease/release`，body：`{"lease_id": "<lease_id>"}`。
 
-用完机器人后应 **release**，避免 lease 长期被占用。
+`/code/execute` 接受任务后，Lease 会与返回的 `execution_id` 绑定。此时
+Lease 不会因为 60 秒 idle 检测而在任务中途释放；代码执行超时与 Lease
+的 hard max 仍然生效。若运行中调用 `release`、`/code/stop`，或触发 hard
+max，Lease 进入 `ending`，先停止绑定任务，并等待该任务完成收尾后才真正
+释放、再向队列中的下一位授权。正常调用方应轮询到 `is_running=false` 后再
+主动 `release`；任务正常完成时 Server 也会自动释放绑定 Lease。
 
 ## 其他常用端点
 

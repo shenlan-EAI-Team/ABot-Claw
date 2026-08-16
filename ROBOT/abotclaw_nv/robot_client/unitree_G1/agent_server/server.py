@@ -191,7 +191,7 @@ def build_app(cfg: ServerConfig, service_mgr: ServiceManager | None = None) -> F
     from routes.lease_routes import create_router as lease_router
     from routes.state_routes import create_router as state_router
     from routes.ws import create_router as ws_router
-    from routes.code_routes import init_code_routes
+    from routes.code_routes import init_code_routes, get_executor
     from routes.sdk_docs import router as sdk_docs_router
     from routes.system_guide import router as system_guide_router
     from routes.yolo_routes import router as yolo_router
@@ -202,6 +202,13 @@ def build_app(cfg: ServerConfig, service_mgr: ServiceManager | None = None) -> F
     from routes.face_routes import router as face_router
     from routes.memory_routes import router as memory_router
     from routes.tts_routes import router as tts_router
+
+    # Couple lease ownership to the exact /code/execute lifecycle without
+    # introducing imports from LeaseManager back into the route layer.
+    lease_mgr.set_execution_callbacks(
+        is_active=lambda execution_id: get_executor().is_execution_active(execution_id),
+        stop=lambda execution_id, reason: get_executor().stop_execution(execution_id, reason),
+    )
 
     # IK controller is NOT exposed to submitted code by design.
 
@@ -240,12 +247,11 @@ def build_app(cfg: ServerConfig, service_mgr: ServiceManager | None = None) -> F
 
         # Display status polling (1 Hz)
         async def _display_status_loop():
-            from routes.code_routes import get_executor
             prev_running = False
             while True:
                 try:
                     executor = get_executor()
-                    is_running = executor.is_running
+                    is_running = executor.is_busy
                     lease_status = lease_mgr.status()
                     queue_length = lease_status.get("queue_length", 0)
                     holder = lease_status.get("holder", "") or ""
@@ -284,9 +290,8 @@ def build_app(cfg: ServerConfig, service_mgr: ServiceManager | None = None) -> F
         logger.info("Shutting down Unitree G1 Agent Server")
 
         try:
-            from routes.code_routes import get_executor
             executor = get_executor()
-            if executor.is_running:
+            if executor.is_busy:
                 executor.stop()
             executor.cleanup_old_code_files()
         except Exception as e:

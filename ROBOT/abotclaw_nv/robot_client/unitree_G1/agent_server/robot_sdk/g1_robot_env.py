@@ -3,7 +3,7 @@
 在 ``/code/execute`` 子进程中通过 ``install_into_globals`` 注入：
 
 - ``env``：本类实例（推荐 ``env.read_cameras()`` / ``env.yolo`` 等）
-- 兼容别名：``camera``、``camera_d435i``、``yolo``、``memory``、``face``、``tts``、``vision``、``grasp_target``、``grasp_something``、``release_object``、``release_something``
+- 兼容别名：``camera``、``camera_d435i``、``yolo``、``memory``、``face``、``tts``、``vision``、``vlac``、``grasp_target``、``grasp_something``、``grasp_with_vlac``、``release_object``、``release_something``
 - ``Nav2Anywhere``：ROS2 导航客户端类（``navigation_sdk``，需运行前已 ``source /opt/ros/humble/setup.bash``）
 
 与 Piper 形状对齐的便捷方法：
@@ -15,8 +15,12 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, Tuple
 
+import cv2
+
+from .vpr_sdk import VPRSDK
 
 class _D435iFrameView:
     __slots__ = ("rgb", "depth")
@@ -187,6 +191,12 @@ class G1RobotEnv:
 
         self._yolo = _LazyYolo(_get_yolo)
         self._memory = MemorySDK()
+        self._vpr = VPRSDK()
+        try:
+            from .vlac_sdk import VLACSDK
+        except ImportError:
+            from vlac_sdk import VLACSDK
+        self._vlac = VLACSDK()
 
         self._face_holder: Dict[str, Any] = {"v": None}
 
@@ -237,6 +247,13 @@ class G1RobotEnv:
     @property
     def memory(self) -> Any:
         return self._memory
+    @property
+    def vpr(self):
+        return self._vpr
+
+    @property
+    def vlac(self) -> Any:
+        return self._vlac
 
     @property
     def face(self) -> Any:
@@ -249,6 +266,147 @@ class G1RobotEnv:
     @property
     def tts(self) -> Any:
         return self._tts
+
+    def grasp_with_vlac(
+        self,
+        object_name: str,
+        *,
+        task_description: str | None = None,
+        settle_seconds: float = 2.0,
+        **grasp_kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Execute the stable grasp, capturing After at lift_return for VLAC.
+
+        VLAC failures are reported in the returned structure and never replace
+        the underlying grasp execution result. ``settle_seconds`` is retained
+        for call compatibility but no longer controls or delays After capture.
+        """
+        from robot_sdk.grasp_something_sdk import grasp_something
+
+        description = task_description or f"Pick up the {object_name} from the table."
+        result: Dict[str, Any] = {
+            "execution_success": False,
+            "critic_available": False,
+            "verification_available": False,
+            "critic_score": None,
+            "critic_list": None,
+            "value_list": None,
+            "grasp_decision": None,
+            "removal_confirmed": None,
+            "holding_score": None,
+            "holding_confirmed": None,
+            "reward": None,
+            "done": None,
+        }
+        errors = []
+        capture_timestamp = int(time.time())
+        vlac_log_dir = Path(__file__).resolve().parent.parent / "logs"
+
+        before_rgb = None
+        print("[VLAC] Capturing Before RGB")
+        try:
+            before_frame = self._camera_d435i.get_frame()
+            before_rgb = getattr(before_frame, "rgb", None) if before_frame else None
+            if before_rgb is None:
+                raise RuntimeError("D435i Before RGB unavailable")
+            before_rgb = before_rgb.copy()
+            try:
+                vlac_log_dir.mkdir(parents=True, exist_ok=True)
+                before_path = vlac_log_dir / f"vlac_before_{capture_timestamp}.jpg"
+                before_bgr = cv2.cvtColor(before_rgb, cv2.COLOR_RGB2BGR)
+                if not cv2.imwrite(str(before_path), before_bgr):
+                    raise RuntimeError("cv2.imwrite returned False")
+                print(f"[VLAC] Before RGB saved: {before_path}")
+            except Exception as exc:
+                print(f"[VLAC] Warning: failed to save Before RGB: {exc}")
+        except Exception as exc:
+            errors.append(f"before capture: {exc}")
+
+        after_holder: Dict[str, Any] = {"rgb": None}
+
+        def _capture_after_lift() -> None:
+            print("[VLAC] Capturing After RGB after lift_return")
+            try:
+                frame = self._camera_d435i.get_frame()
+                rgb = getattr(frame, "rgb", None) if frame else None
+                if rgb is None:
+                    raise RuntimeError("D435i After RGB unavailable")
+                after_holder["rgb"] = rgb.copy()
+                try:
+                    vlac_log_dir.mkdir(parents=True, exist_ok=True)
+                    after_path = (
+                        vlac_log_dir
+                        / f"vlac_after_step5_{capture_timestamp}.jpg"
+                    )
+                    after_bgr = cv2.cvtColor(
+                        after_holder["rgb"], cv2.COLOR_RGB2BGR
+                    )
+                    if not cv2.imwrite(str(after_path), after_bgr):
+                        raise RuntimeError("cv2.imwrite returned False")
+                    print(f"[VLAC] After RGB saved: {after_path}")
+                except Exception as exc:
+                    print(f"[VLAC] Warning: failed to save After RGB: {exc}")
+                print("[VLAC] After RGB captured successfully")
+            except Exception as exc:
+                # Camera/VLAC failures must not prevent the final home motion.
+                errors.append(f"after capture: {exc}")
+
+        try:
+            result["execution_success"] = bool(
+                grasp_something(
+                    object_name,
+                    after_lift_callback=_capture_after_lift,
+                    **grasp_kwargs,
+                )
+            )
+        except Exception as exc:
+            result["execution_error"] = str(exc)
+
+        # Kept only for backward-compatible calls; After is already fixed above.
+        _ = settle_seconds
+        after_rgb = after_holder["rgb"]
+
+        if before_rgb is not None and after_rgb is not None:
+            try:
+                critic = self._vlac.evaluate_progress(
+                    before_image=before_rgb,
+                    after_image=after_rgb,
+                    task_description=description,
+                )
+                critic_score = float(critic["critic_list"][0])
+                result.update(
+                    critic_available=True,
+                    critic_score=critic_score,
+                    critic_list=critic["critic_list"],
+                    value_list=critic.get("value_list"),
+                    critic_latency_ms=critic.get("latency_ms"),
+                    reward=critic_score,
+                    critic_result=critic,
+                )
+            except Exception as exc:
+                errors.append(f"critic: {exc}")
+
+            try:
+                holding = self._vlac.verify_holding(
+                    after_image=after_rgb,
+                    target_label=object_name,
+                )
+                holding_score = float(holding["holding_score"])
+                done = bool(holding["grasp_success"])
+                result.update(
+                    verification_available=True,
+                    holding_score=holding_score,
+                    holding_confirmed=done,
+                    done=done,
+                    holding_result=holding,
+                    grasp_verification=holding,
+                )
+            except Exception as exc:
+                errors.append(f"grasp holding verification: {exc}")
+
+        if errors:
+            result["vlac_error"] = "; ".join(errors)
+        return result
 
     def read_cameras(self) -> Tuple[Dict[str, Any], Dict[str, float]]:
         """对齐 ``PiperRobotEnv.read_cameras``：返回 ``(images, timestamps)``。
@@ -309,12 +467,15 @@ class G1RobotEnv:
         g["env"] = self
         g["grasp_target"] = self._grasp_target
         g["grasp_something"] = grasp_something
+        g["grasp_with_vlac"] = self.grasp_with_vlac
         g["release_object"] = release_object
         g["release_something"] = release_something
         g["camera"] = self._camera
         g["camera_d435i"] = self._camera_d435i
         g["yolo"] = self._yolo
         g["memory"] = self._memory
+        g["vpr"] = self._vpr
+        g["vlac"] = self._vlac
         g["face"] = self._face
         g["tts"] = self._tts
         g["vision"] = self._vision
@@ -350,3 +511,12 @@ class G1RobotEnv:
         d435i_host = get_g1_d435i_host(default=robot_ip)
         d435i_port = get_g1_d435i_port()
         return cls(robot_ip=robot_ip, d435i_host=d435i_host, d435i_port=d435i_port)
+
+
+def grasp_with_vlac(
+    env: G1RobotEnv,
+    object_name: str,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Importable helper; ``/code/execute`` injects the bound env method."""
+    return env.grasp_with_vlac(object_name, **kwargs)

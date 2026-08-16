@@ -217,3 +217,85 @@ python main.py
 
 - 结构化存储: data/memory_hub.db
 - 图像证据: data/images/*.jpg
+
+## 视觉地点索引第一阶段接口
+
+SpatialMemory 继续监听 `8022`。VisualPlaceRecognition（VPR）是独立的
+`8030` 服务；本阶段由上层 OpenClaw 编排两个服务，SpatialMemory 不会主动调用
+`8030`，也不保存 SALAD embedding、embedding cache 或 FAISS 索引。
+
+地点的稳定标识是 `place_id`。当前每个地点只有一张参考图，因此第一版的
+`image_id` 与 `place_id` 值相同，但两者是独立概念，调用方应分别读取和传递。
+
+### 写入地点
+
+`POST /memory/place/upsert` 的请求保持不变，原有响应字段
+`ok`、`id`、`has_reference_image`、`image_path` 均保留，并新增：
+
+```json
+{
+  "place_id": "plc_93751e30613b",
+  "image_id": "plc_93751e30613b",
+  "image_sha256": "64位小写十六进制",
+  "visual_index_status": "not_indexed",
+  "visual_index": {
+    "status": "not_indexed",
+    "image_id": "plc_93751e30613b",
+    "image_sha256": "64位小写十六进制",
+    "backend": null,
+    "version": null,
+    "updated_at": null,
+    "error": null
+  }
+}
+```
+
+哈希基于最终落盘的 RGB JPEG 字节。没有参考图片时 `image_sha256` 为 `null`。
+
+### 精确查询和图片下载
+
+- `GET /memory/place/{place_id}`：按 ID 精确返回一条 place，非 place 或不存在均为
+  `404`。响应保留完整 `target_pose` 和 `evidence.image_path`，并包含图片元数据和
+  `visual_index`。
+- `GET /memory/place/{place_id}/image`：直接返回原始参考 JPEG，响应类型为
+  `image/jpeg`，并使用图片 SHA-256 设置 `ETag`。
+
+```bash
+curl --fail \
+  http://127.0.0.1:8022/memory/place/plc_93751e30613b/image \
+  --output place.jpg
+```
+
+### 更新视觉索引状态
+
+`PATCH /memory/place/{place_id}/visual-index` 只更新索引状态摘要，不调用 VPR：
+
+```bash
+curl --fail -X PATCH \
+  http://127.0.0.1:8022/memory/place/plc_93751e30613b/visual-index \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "status": "indexed",
+    "image_id": "plc_93751e30613b",
+    "image_sha256": "<upsert 返回的 SHA-256>",
+    "backend": "salad",
+    "version": "salad_v1"
+  }'
+```
+
+状态含义：
+
+- `not_indexed`：尚未提交 VPR。
+- `pending`：上层编排正在建立索引。
+- `indexed`：VPR 已成功建立索引，必须提供 `backend` 和 `version`。
+- `failed`：建立索引失败，可提供简短 `error`。
+- `deleted`：VPR 侧索引已删除；地点本身仍保留。
+
+服务端生成权威 `updated_at`。如果请求哈希与当前 JPEG 不一致则返回 `409`。
+元数据保存在现有 SQLite `extra_json` 对象的 `visual_index` 键中，更新时保留其他
+扩展字段。
+
+旧地点不需要数据库迁移：没有 `visual_index` 时查询会返回 `not_indexed` 默认值；
+没有已存哈希时按需从现有 JPEG 计算；图片缺失时返回 `null`，不会导致地点查询
+失败。`POST /query/place` 保持原字段语义，并无破坏地增加同样的地点图片与索引
+元数据。

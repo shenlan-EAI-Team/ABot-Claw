@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 
@@ -100,6 +100,7 @@ def grasp_something(
     detection_index: int = 0,
     right_target_offset: Optional[Sequence[float]] = None,
     log_dir: Optional[str | Path] = None,
+    after_lift_callback: Optional[Callable[[], None]] = None,
 ) -> bool:
     """检测并抓取指定目标。
 
@@ -109,6 +110,7 @@ def grasp_something(
         detection_index: 多目标时按置信度排序后选取的索引。
         right_target_offset: 可选右手抓取偏移。
         log_dir: 检测图保存目录，默认 ``agent_server/logs``。
+        after_lift_callback: ``lift_return`` 成功后、最终回 home 前调用的可选回调。
 
     Returns:
         完整流程是否成功。
@@ -147,6 +149,7 @@ def grasp_something(
             plan["right_pos"],
             plan.get("left_pos", [0.01, 0.212, -0.204 ]),
             robot_ip=robot_ip or get_g1_robot_ip(),
+            after_lift_callback=after_lift_callback,
         )
 
         if success:

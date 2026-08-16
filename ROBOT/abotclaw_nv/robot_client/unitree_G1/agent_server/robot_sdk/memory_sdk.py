@@ -11,11 +11,17 @@
     - query_object(...)    -> list    按名称查询物体
     - upsert_place(...)    -> dict   写入/更新地点记忆
     - query_place(...)     -> list    按名称查询地点
+    - get_place(...)       -> dict    按 place_id 查询地点
+    - ingest_semantic_frame(...) -> dict 写入语义帧
+    - semantic_text_query(...) -> list 文本检索语义帧
+    - query_position(...)  -> list    按位置检索记忆
 """
 
 from __future__ import annotations
 
+import base64
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -91,6 +97,28 @@ class MemorySDK:
         for r in results:
             print(r["name"], r["target_pose"])
     """
+
+    def update_visual_index(
+        self,
+        place_id: str,
+        visual_index: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """更新已有地点的视觉索引状态。
+
+        Args:
+            place_id: SpatialMemory 已创建的地点 ID。
+            visual_index: VPR 视觉索引元数据。
+
+        Returns:
+            SpatialMemory 返回结果。
+        """
+        resp = requests.patch(
+            f"{self._base_url}/memory/place/{place_id}/visual-index",
+            json=visual_index,
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     def __init__(
         self,
@@ -280,6 +308,84 @@ class MemorySDK:
         if robot_id is not None:
             payload["robot_id"] = robot_id
         data = self._post("/query/place", payload)
+        return data.get("results", [])
+
+    def get_place(self, place_id: str) -> Dict[str, Any]:
+        """按真实 SpatialMemory place_id 读取地点记录。"""
+        resp = requests.get(
+            f"{self._base_url}/memory/place/{place_id}",
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def ingest_semantic_frame(
+        self,
+        robot_id: str,
+        robot_type: str,
+        robot_pose: Pose | Dict[str, Any],
+        image_path: str,
+        note: str = "",
+        tags: Optional[List[str]] = None,
+        source: str = "camera",
+    ) -> Dict[str, Any]:
+        """读取 Robot 本地 JPEG，并以 data URI 写入 Semantic Frame。"""
+        with open(image_path, "rb") as image_file:
+            image_b64 = base64.b64encode(image_file.read()).decode("ascii")
+
+        payload: Dict[str, Any] = {
+            "robot_id": robot_id,
+            "robot_type": robot_type,
+            "robot_pose": (
+                robot_pose.to_dict()
+                if isinstance(robot_pose, Pose)
+                else robot_pose
+            ),
+            "source": source,
+            "task_id": None,
+            "tags": tags or [],
+            "note": note,
+            "timestamp": time.time(),
+            "image": "data:image/jpeg;base64," + image_b64,
+        }
+        return self._post("/memory/semantic/ingest", payload)
+
+    def semantic_text_query(
+        self,
+        text: str,
+        n_results: int = 5,
+        memory_type: str = "semantic_frame",
+    ) -> List[Dict[str, Any]]:
+        """按文本检索已有语义记忆。"""
+        data = self._post(
+            "/query/semantic/text",
+            {
+                "text": text,
+                "n_results": n_results,
+                "memory_type": memory_type,
+            },
+        )
+        return data.get("results", [])
+
+    def query_position(
+        self,
+        x: float,
+        y: float,
+        radius: float,
+        n_results: int = 5,
+        memory_type: str = "place",
+    ) -> List[Dict[str, Any]]:
+        """按二维位置和半径检索记忆。"""
+        data = self._post(
+            "/query/position",
+            {
+                "x": x,
+                "y": y,
+                "radius": radius,
+                "n_results": n_results,
+                "memory_type": memory_type,
+            },
+        )
         return data.get("results", [])
 
     def stop(self) -> None:

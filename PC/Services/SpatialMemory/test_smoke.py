@@ -22,6 +22,14 @@ def tiny_image_b64() -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+def local_image_path(returned_path: str) -> str:
+    """Resolve container paths when this smoke test runs on the bind-mounted host."""
+    container_root = "/services/SpatialMemory"
+    if returned_path.startswith(container_root):
+        return os.path.dirname(os.path.abspath(__file__)) + returned_path[len(container_root):]
+    return returned_path
+
+
 def must_post(path: str, payload: dict[str, Any], timeout: int = TIMEOUT) -> dict[str, Any]:
     resp = requests.post(f"{BASE}{path}", json=payload, timeout=timeout)
     resp.raise_for_status()
@@ -53,6 +61,7 @@ def main() -> None:
     ts_seed = int(time.time())
     object_name = f"cup_smoke_{ts_seed}"
     place_name = f"kitchen_smoke_{ts_seed}"
+    place_image_name = f"kitchen_visual_smoke_{ts_seed}"
     task_marker = f"smoke_task_{ts_seed}"
 
     object_id = None
@@ -62,6 +71,9 @@ def main() -> None:
         "health",
         "object upsert",
         "place upsert",
+        "place upsert base64 image",
+        "place upsert data uri image",
+        "place invalid image",
         "semantic ingest",
         "keyframe batch ingest",
         "query object",
@@ -135,7 +147,51 @@ def main() -> None:
                 data = must_post("/memory/place/upsert", payload)
                 check(data.get("ok") is True, "place upsert must return ok=true")
                 check(bool(data.get("id")), "place upsert must return id")
+                check(data.get("has_reference_image") is False, "place without image must report no reference image")
+                check(data.get("image_path") is None, "place without image must return image_path=null")
                 print_ok(item, data)
+
+            elif item in {"place upsert base64 image", "place upsert data uri image"}:
+                print_step(item)
+                captured_at = time.time()
+                is_data_uri = item == "place upsert data uri image"
+                payload = {
+                    "place_name": place_image_name,
+                    "robot_id": "humanoid_001",
+                    "robot_type": "humanoid",
+                    "place_pose": {"x": 2.1, "y": 3.1},
+                    "image": f"data:image/jpeg;base64,{image_b64}" if is_data_uri else image_b64,
+                    "image_captured_at": captured_at if not is_data_uri else None,
+                    "task_description": "smoke reference scene",
+                }
+                data = must_post("/memory/place/upsert", payload)
+                check(data.get("ok") is True, "place image upsert must return ok=true")
+                check(data.get("has_reference_image") is True, "place image upsert must report a reference image")
+                image_path = data.get("image_path")
+                check(bool(image_path), "place image upsert must return image_path")
+                saved_path = local_image_path(image_path)
+                check(os.path.isfile(saved_path), f"saved reference image does not exist: {saved_path}")
+                with Image.open(saved_path) as saved_image:
+                    saved_image.verify()
+                print_ok(item, data)
+
+            elif item == "place invalid image":
+                print_step(item)
+                response = requests.post(
+                    f"{BASE}/memory/place/upsert",
+                    json={
+                        "place_name": f"invalid_image_{ts_seed}",
+                        "robot_id": "humanoid_001",
+                        "robot_type": "humanoid",
+                        "place_pose": {"x": 0.0, "y": 0.0},
+                        "image": "this-is-not-a-valid-image",
+                    },
+                    timeout=TIMEOUT,
+                )
+                check(response.status_code == 422, f"invalid place image must return 422, got {response.status_code}")
+                health = must_get("/health")
+                check(health.get("status") == "ok", "service must remain healthy after invalid image")
+                print_ok(item, {"status_code": response.status_code})
 
             elif item == "semantic ingest":
                 print_step(item)
@@ -209,6 +265,17 @@ def main() -> None:
                 check(len(results) >= 1, "query place should return at least one result")
                 names = [r.get("name", "") for r in results]
                 check(any(place_name in n for n in names), "query place should contain inserted place name")
+                image_data = must_post(
+                    "/query/place",
+                    {"name": place_image_name, "robot_id": "humanoid_001", "n_results": 5},
+                )
+                image_results = image_data.get("results", [])
+                check(len(image_results) >= 1, "query place should return the reference-image place")
+                evidence = image_results[0].get("evidence", {})
+                extra = evidence.get("extra", {})
+                check(bool(evidence.get("image_path")), "queried place evidence must contain image_path")
+                check(extra.get("task_description") == "smoke reference scene", "queried task_description mismatch")
+                check(isinstance(extra.get("image_captured_at"), (int, float)), "queried image_captured_at must be numeric")
                 print_ok(item, {"count": len(results)})
 
             elif item == "query position":

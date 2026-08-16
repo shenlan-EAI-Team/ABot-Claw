@@ -374,6 +374,68 @@ curl http://127.0.0.1:8022/health
 }
 ```
 
+### 4.12 视觉地点索引第一阶段
+
+服务边界：
+
+- SpatialMemory 地址仍为 `http://127.0.0.1:8022`。
+- VPR 独立监听 `8030`。SpatialMemory 不主动调用它；跨服务步骤由上层
+  OpenClaw 编排。
+- SpatialMemory 只保存地点、原始参考 JPEG、图片 SHA-256 和索引状态摘要，不保存
+  SALAD embedding、embedding cache 或 FAISS 数据。
+- 当前 `place_id` 和 `image_id` 值相同，但概念独立，Agent 必须分别读取。
+
+地点 upsert 请求不变，响应保留 `ok/id/has_reference_image/image_path` 并新增
+`place_id`、`image_id`、`image_sha256`、`visual_index_status` 和
+`visual_index`。哈希对应最终落盘的 JPEG 字节。
+
+按稳定 ID 查询：
+
+```bash
+curl --fail \
+  http://127.0.0.1:8022/memory/place/<place_id>
+```
+
+下载参考图：
+
+```bash
+curl --fail \
+  http://127.0.0.1:8022/memory/place/<place_id>/image \
+  --output /tmp/place.jpg
+```
+
+只更新索引状态：
+
+```bash
+curl --fail -X PATCH \
+  http://127.0.0.1:8022/memory/place/<place_id>/visual-index \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "status": "indexed",
+    "image_id": "<image_id>",
+    "image_sha256": "<upsert 返回的 SHA-256>",
+    "backend": "salad",
+    "version": "salad_v1"
+  }'
+```
+
+合法状态为 `not_indexed`、`pending`、`indexed`、`failed`、`deleted`。
+`indexed` 必须同时提供 `backend` 与 `version`；哈希与当前参考图不匹配返回
+`409`；`updated_at` 由 SpatialMemory 生成。PATCH 只允许修改
+`extra.visual_index`，不会修改名称、别名、pose、备注或图片路径。
+
+老地点没有视觉索引元数据时自动返回 `not_indexed`；存在图片时按需计算
+SHA-256，图片缺失时返回 `null` 而不是使地点查询失败。`POST /query/place` 的
+`id`、`target_pose`、`evidence.image_path` 保持兼容，并增加相同的地点图片和索引
+元数据。
+
+下一阶段 Agent 编排契约：
+
+1. `POST /memory/place/upsert`，保存 `place_id/image_id/image_sha256`。
+2. `PATCH /memory/place/{place_id}/visual-index`，写入 `pending`。
+3. 调用 `POST http://127.0.0.1:8030/visual-index/images/upload`。
+4. 根据 VPR 结果 PATCH 为 `indexed` 或 `failed`。
+
 ## 5. 统一检索返回结构
 
 所有 query 返回均遵循统一结构，建议 Agent 只依赖该结构的关键字段，不要耦合内部实现细节。
@@ -521,4 +583,3 @@ curl http://127.0.0.1:8022/health
 - 5xx 错误: 可进行指数退避重试
 - 查询空结果: 不视为异常，返回“未找到”并可降级到统一检索
 - 任务状态 failed: 读取 error 字段并记录 options 复现
-

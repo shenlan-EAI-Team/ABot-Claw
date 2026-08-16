@@ -33,6 +33,7 @@ execution:
   max_plan_runtime_s: 240
   navigation_timeout_s: 75
   face_wait_timeout_s: 30
+  grasp_vlac_timeout_s: 180
   code_overhead_s: 25
 
 acceptance:

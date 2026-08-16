@@ -129,6 +129,7 @@ def _get_exec_logger() -> logging.Logger:
 class ExecutionStatus(str, Enum):
     """Status of code execution."""
     IDLE = "idle"
+    STARTING = "starting"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -417,10 +418,19 @@ class CodeExecutor:
     def __init__(self) -> None:
         self._process: Optional[subprocess.Popen] = None
         self._execution_id: Optional[str] = None
+        # ``/code/execute`` is non-blocking: there is a short window between
+        # accepting a request and actually creating Popen.  Reserve the single
+        # execution slot synchronously so a second request cannot slip through
+        # that window.
+        self._reserved_execution_id: Optional[str] = None
+        self._cancel_before_start: dict[str, str] = {}
         self._start_time: Optional[float] = None
         self._last_result: Optional[ExecutionResult] = None
         self._history: List[ExecutionResult] = []  # Last N results
         self._current_code: Optional[str] = None  # User code (without wrapper)
+        self._holder: str = ""
+        self._client_host: str = ""
+        self._api_key_name: str = ""
         # Incremental output capture (thread-safe)
         self._stdout_lines: List[str] = []
         self._stderr_lines: List[str] = []
@@ -430,6 +440,38 @@ class CodeExecutor:
     def is_running(self) -> bool:
         """Check if code is currently executing."""
         return self._process is not None and self._process.poll() is None
+
+    @property
+    def is_busy(self) -> bool:
+        """True from request acceptance until execution finalization."""
+        return self._reserved_execution_id is not None or self.is_running
+
+    def reserve(self, execution_id: str, code: str) -> bool:
+        """Atomically reserve the single execution slot before create_task()."""
+        if self.is_busy:
+            return False
+        self._reserved_execution_id = execution_id
+        self._execution_id = execution_id
+        self._current_code = code
+        self._start_time = time.time()
+        return True
+
+    def cancel_reservation(self, execution_id: str) -> bool:
+        """Cancel a reservation that has not entered ``execute`` yet."""
+        if self._reserved_execution_id != execution_id or self.is_running:
+            return False
+        self._reserved_execution_id = None
+        self._cancel_before_start.pop(execution_id, None)
+        if self._execution_id == execution_id:
+            self._execution_id = None
+        return True
+
+    def is_execution_active(self, execution_id: str) -> bool:
+        """Whether ``execution_id`` still owns the executor slot."""
+        return (
+            self._execution_id == execution_id
+            and (self._reserved_execution_id == execution_id or self.is_running)
+        )
 
     def validate_code(self, code: str) -> CodeValidationResult:
         """Validate code before execution.
@@ -448,7 +490,17 @@ class CodeExecutor:
     @property
     def status(self) -> ExecutionStatus:
         """Get current execution status."""
+        if self._reserved_execution_id is not None and not self.is_running:
+            if (
+                self._last_result
+                and self._last_result.execution_id == self._reserved_execution_id
+                and self._last_result.status == ExecutionStatus.STOPPED
+            ):
+                return ExecutionStatus.STOPPED
+            return ExecutionStatus.STARTING
         if self._process is None:
+            if self._last_result:
+                return self._last_result.status
             return ExecutionStatus.IDLE
         if self._process.poll() is None:
             return ExecutionStatus.RUNNING
@@ -531,6 +583,40 @@ class CodeExecutor:
         Raises:
             RuntimeError: If code is already running
         """
+        # Normal route flow reserves the slot before this coroutine starts.
+        # Keep direct/internal callers compatible by reserving on demand.
+        if self._reserved_execution_id not in (None, execution_id):
+            raise RuntimeError("Code is already reserved by another execution.")
+        if self._reserved_execution_id is None:
+            if not self.reserve(execution_id, code):
+                raise RuntimeError("Code is already running. Stop it first.")
+
+        if execution_id in self._cancel_before_start:
+            stop_reason = self._cancel_before_start.pop(execution_id)
+            duration = time.time() - self._start_time if self._start_time else 0.0
+            result = ExecutionResult(
+                status=ExecutionStatus.STOPPED,
+                execution_id=execution_id,
+                exit_code=None,
+                stdout="",
+                stderr="",
+                duration=duration,
+                error=f"Stopped before subprocess start: {stop_reason}",
+                stop_reason=stop_reason,
+                started_at=self._start_time or time.time(),
+                code=code,
+                holder=holder,
+                client_host=client_host,
+                api_key_name=api_key_name,
+            )
+            self._last_result = result
+            self._history.append(result)
+            if len(self._history) > 10:
+                self._history = self._history[-10:]
+            self._reserved_execution_id = None
+            self._log_execution_output(result)
+            return result
+
         if self.is_running:
             raise RuntimeError("Code is already running. Stop it first.")
 
@@ -655,6 +741,8 @@ class CodeExecutor:
 
         finally:
             self._process = None
+            if self._reserved_execution_id == execution_id:
+                self._reserved_execution_id = None
             # If stop() already recorded a STOPPED result for this execution,
             # keep that result instead of overwriting with a misleading status.
             if (self._last_result
@@ -695,6 +783,27 @@ class CodeExecutor:
             True if code was stopped, False if nothing was running
         """
         if not self.is_running:
+            # The request may already be accepted/bound to a lease while the
+            # background coroutine has not reached Popen yet.  Mark it so
+            # execute() exits without starting a subprocess.
+            if self._reserved_execution_id is not None:
+                execution_id = self._reserved_execution_id
+                self._cancel_before_start[execution_id] = reason
+                duration = time.time() - self._start_time if self._start_time else 0.0
+                self._last_result = ExecutionResult(
+                    status=ExecutionStatus.STOPPED,
+                    execution_id=execution_id,
+                    exit_code=None,
+                    stdout="",
+                    stderr="",
+                    duration=duration,
+                    error=f"Stopped before subprocess start: {reason}",
+                    stop_reason=reason,
+                    started_at=self._start_time or time.time(),
+                    code=self._current_code or "",
+                    api_key_name=self._api_key_name,
+                )
+                return True
             return False
 
         logger.info(f"Stopping execution {self._execution_id} (reason: {reason})")
@@ -744,6 +853,12 @@ class CodeExecutor:
         self._process = None
         self._log_execution_output(self._last_result)
         return True
+
+    def stop_execution(self, execution_id: str, reason: str = "manual") -> bool:
+        """Stop only the execution bound to ``execution_id``."""
+        if self._execution_id != execution_id:
+            return False
+        return self.stop(reason=reason)
 
     @property
     def current_code(self) -> Optional[str]:

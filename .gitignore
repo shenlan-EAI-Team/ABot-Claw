@@ -57,3 +57,14 @@ workspace/memory/
 
 # Docker build context
 .docker_context/
+# Archives
+*.zip
+
+# Runtime databases / backups
+*.db
+*.db.bak
+
+# Test/runtime images
+PC/Services/SpatialMemory/data/images/test_*.jpg
+# Model weights
+*.safetensors

@@ -122,11 +122,10 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
         if not lease_manager.validate_lease(x_lease_id):
             raise HTTPException(status_code=403, detail="Invalid or expired lease")
 
-        lease_manager.record_command()
-
-        # Check if code is already running
+        # Check whether the single executor slot is occupied.  ``is_busy`` also
+        # covers the accepted-but-not-yet-Popen STARTING window.
         executor = get_executor()
-        if executor.is_running:
+        if executor.is_busy:
             raise HTTPException(
                 status_code=409,
                 detail="Code is already running. Stop it first with POST /code/stop"
@@ -146,6 +145,22 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
         # Generate execution ID
         execution_id = str(uuid.uuid4())[:8]
 
+        # Reserve the executor first, then atomically bind that reservation to
+        # the lease.  This closes the gap between HTTP acceptance and Popen.
+        if not executor.reserve(execution_id, body.code):
+            raise HTTPException(
+                status_code=409,
+                detail="Code executor became busy; retry after the current execution finishes",
+            )
+        if not await lease_manager.bind_execution(x_lease_id, execution_id):
+            executor.cancel_reservation(execution_id)
+            if not lease_manager.validate_lease(x_lease_id):
+                raise HTTPException(status_code=403, detail="Invalid or expired lease")
+            raise HTTPException(
+                status_code=409,
+                detail="Lease already has an execution or is ending",
+            )
+
         # Use timeout from request or central default
         timeout = body.timeout if body.timeout is not None else TIMING.code_execution_timeout_s
 
@@ -163,8 +178,8 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
         recorder = get_recorder()
 
         async def run_code():
-            recorder.start(execution_id, camera_backend, state_agg)
             try:
+                recorder.start(execution_id, camera_backend, state_agg)
                 result = await executor.execute(
                     code=body.code,
                     execution_id=execution_id,
@@ -177,18 +192,42 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
             except Exception as e:
                 logger.error(f"Code execution {execution_id} failed: {e}", exc_info=True)
             finally:
-                recorder.stop()
-                recorder.cleanup_old_recordings()
-                # Auto-release lease after task completion
+                # Recorder failures must never prevent executor/lease cleanup.
+                try:
+                    recorder.stop()
+                    recorder.cleanup_old_recordings()
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to finalize recorder for execution {execution_id}: {e}",
+                        exc_info=True,
+                    )
+
+                # If execute() failed before entering its own finalizer (for
+                # example while creating the generated script), release the
+                # accepted STARTING reservation here.
+                executor.cancel_reservation(execution_id)
+
+                # The lease is not actually freed until this exact bound
+                # execution has returned and all executor finalization is done.
                 if x_lease_id:
                     try:
-                        release_result = await lease_manager.release(x_lease_id)
-                        logger.info(f"Auto-released lease {x_lease_id}: {release_result['status']}")
+                        release_result = await lease_manager.finish_execution(
+                            x_lease_id, execution_id
+                        )
+                        logger.info(
+                            f"Finalized lease {x_lease_id} after execution {execution_id}: "
+                            f"{release_result['status']}"
+                        )
                     except Exception as e:
-                        logger.warning(f"Failed to auto-release lease {x_lease_id}: {e}")
+                        logger.warning(f"Failed to finalize lease {x_lease_id}: {e}")
 
         # Start execution as background task
-        task = asyncio.create_task(run_code())
+        try:
+            task = asyncio.create_task(run_code())
+        except Exception:
+            executor.cancel_reservation(execution_id)
+            await lease_manager.finish_execution(x_lease_id, execution_id)
+            raise
         request.app.state.background_tasks.add(task)
 
         return CodeExecuteResponse(
@@ -232,25 +271,30 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
         if not x_lease_id:
             raise HTTPException(status_code=401, detail="Missing X-Lease-Id header")
 
-        if not lease_manager.validate_lease(x_lease_id):
+        lease_info = lease_manager.current_lease
+        if not lease_info or lease_info.lease_id != x_lease_id:
             raise HTTPException(status_code=403, detail="Invalid or expired lease")
 
-        lease_manager.record_command()
-
         executor = get_executor()
-        if not executor.is_running:
+        execution_id = lease_info.execution_id if lease_info else None
+        if not execution_id or not executor.is_execution_active(execution_id):
             return CodeStopResponse(
                 success=False,
                 message="No code is currently running",
             )
 
-        logger.info(f"Stopping code execution for lease {x_lease_id}")
-        stopped = executor.stop(reason="manual")
+        logger.info(
+            f"Stopping code execution {execution_id} for lease {x_lease_id}"
+        )
+        stop_result = await lease_manager.request_execution_stop(
+            x_lease_id, reason="manual"
+        )
+        stopped = stop_result["status"] in ("stopping", "already_stopping")
 
         if stopped:
             return CodeStopResponse(
                 success=True,
-                message="Code execution stopped",
+                message="Code execution stop requested; lease will release after finalization",
             )
         else:
             return CodeStopResponse(
@@ -278,6 +322,9 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
             stdout, stderr = executor.get_current_output()
             if executor._start_time:
                 duration = time.time() - executor._start_time
+        elif executor.is_busy:
+            if executor._start_time:
+                duration = time.time() - executor._start_time
         else:
             # Pull final output and stop info from last result
             last = executor.get_last_result()
@@ -301,7 +348,9 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
         return CodeStatusResponse(
             execution_id=executor._execution_id,
             status=executor.status,
-            is_running=executor.is_running,
+            # Compatibility: existing clients use is_running as "execution is
+            # still active". STARTING therefore remains True here.
+            is_running=executor.is_busy,
             stdout=stdout,
             stderr=stderr,
             stdout_offset=full_stdout_len,
@@ -347,20 +396,20 @@ def init_code_routes(lease_manager: LeaseManager, camera_backend=None, state_agg
 
         # Check current execution first
         if executor._execution_id == execution_id:
-            if executor.is_running:
-                # Still running - return current output
+            if executor.is_busy:
+                # Still active (STARTING or RUNNING) - return current output
                 stdout, stderr = executor.get_current_output()
                 duration = time.time() - executor._start_time if executor._start_time else 0
                 return CodeResultResponse(
                     success=True,
                     result=ExecutionResult(
-                        status=ExecutionStatus.RUNNING,
+                        status=executor.status,
                         execution_id=execution_id,
                         exit_code=None,
                         stdout=stdout,
                         stderr=stderr,
                         duration=duration,
-                        error="Execution still running",
+                        error="Execution still active",
                     ),
                     error="",
                 )

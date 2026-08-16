@@ -117,7 +117,7 @@ def generate_sdk_docs() -> dict:
             "Unitree G1 Humanoid Robot SDK. "
             "The `/code/execute` wrapper builds `G1RobotEnv.from_config()` as `env` "
             "(same role as Piper's `env`) and installs aliases: "
-            "`grasp_target`, `grasp_something`, `release_object`, `camera` (G1D455Camera, ZMQ), `camera_d435i` (TCP, JPEG+Z16), "
+            "`grasp_target`, `grasp_something`, `grasp_with_vlac`, `release_object`, `camera` (G1D455Camera, ZMQ), `camera_d435i` (TCP, JPEG+Z16), "
             "`yolo` (YoloSDK, HTTP), `memory`, `face`, `tts`, `Pose` (memory_sdk.Pose helper), "
             "plus `Nav2Anywhere` (ROS1 Noetic navigation client class). "
             "Robot IPs and HTTP URLs come from `robot_sdk/config.yaml` (`ROBOT_SDK_CONFIG` optional). "
@@ -207,7 +207,7 @@ nav.nav_to_pose(goal)
 reached = nav.wait_until_reached(timeout_sec=180.0)
 ''',
             "notes": [
-                "Pre-created: `env` (G1RobotEnv) plus aliases `grasp_target`, `grasp_something`, `release_object`, `camera`, `camera_d435i`, `yolo`, `memory`, `face`, `tts`, `Pose` (memory_sdk.Pose), and class `Nav2Anywhere` (ROS1 Noetic)",
+                "Pre-created: `env` (G1RobotEnv) plus aliases `grasp_target`, `grasp_something`, `grasp_with_vlac`, `release_object`, `camera`, `camera_d435i`, `yolo`, `vlac`, `memory`, `face`, `tts`, `Pose` (memory_sdk.Pose), and class `Nav2Anywhere` (ROS1 Noetic)",
                 "camera / camera_d435i: `get_frame()` 返回 `(rgb, depth)` tuple（都是 np.ndarray 或 None）。用法：`rgb, depth = camera.get_frame()`；`rgb is None` 才算失败。",
                 "GET /cameras lists `d455` and `d435i` with `available` / `transport`",
                 "yolo calls G1_Yolo HTTP service (YOLO_URL, default :8013); save_detection_image() writes ~/d435i_yolo_*.jpg",
@@ -216,7 +216,7 @@ reached = nav.wait_until_reached(timeout_sec=180.0)
                 "tts: TTSClient via DDS; call tts.initialize() before first use; requires LocoClient activation internally; NO import needed - use pre-created `tts` instance",
                 "Nav2Anywhere: ROS1 Noetic navigation client (rospy; publishes to /move_base_simple/goal); recommended: `nav.publish_simple_goal(x, y, yaw=angle)` (yaw angle avoids quaternion X/Y issues); also accepts `qx/qy/qz/qw` quaternion args (SDK auto-converts to clean Z-axis-only quaternion before publishing); `wait_until_reached(timeout)` blocks until position arrives (3-phase: move_base nav → fine yaw rotate → fine XY adjust); `nav_to_pose(pose_stamped)` for PoseStamped-style goals with auto quaternion cleaning; `rotate_to_yaw(target_yaw)` for in-place fine-tuning; `nav_to_with_yaw(x, y, target_yaw)` for nav+orientation in one call; default thresholds: REACH_THRESHOLD=0.2m, YAW_THRESHOLD_DEFAULT=0.2rad, FINE_YAW_THRESHOLD=0.15rad, XY_FINE_THRESHOLD=0.15m, XY_FINE_SPEED=0.2m/s, ROTATE_SPEED_DEFAULT=0.4rad/s; G1 rotation limit ~±1.3rad; or HTTP `POST /nav/to_pose` from outside /code/execute",
                 "All methods are synchronous (blocking)",
-                "Fixed-pattern manipulation (pre-injected, no import): `grasp_something(name)` 一句话检测+抓取（内部顺序调用 YOLO → grasp_target，按置信度取第一个，失败返回 False）、`grasp_target(r_pos, l_pos)` 给好坐标的精细抓取、`release_object()` 放下/松手（回 home + 打开灵巧手）；direct `ik` / IK SDK imports are rejected",
+                "Fixed-pattern manipulation (pre-injected, no import): `grasp_something(name)` 一句话检测+抓取（内部顺序调用 YOLO → grasp_target，按置信度取第一个，失败返回 False）、`grasp_with_vlac(name, task_description=...)` 在共享 D435i Before/After 上返回 execution_success/reward/done、`grasp_target(r_pos, l_pos)` 给好坐标的精细抓取、`release_object()` 放下/松手（回 home + 打开灵巧手）；direct `ik` / IK SDK imports are rejected",
             ],
         },
     }
@@ -356,6 +356,7 @@ async def get_sdk_modules():
         "modules": [
             {"name": "env", "type": "G1RobotEnv", "description": "Aggregated runtime (from_config); use env.camera, env.yolo, …"},
             {"name": "grasp_something", "type": "function", "description": "One-shot: YOLO detect(name) + grasp_target. Signature: grasp_something(name, *, robot_ip=None, detection_index=0, right_target_offset=None, log_dir=None) -> bool. 失败返回 False，原因看 stdout。"},
+            {"name": "grasp_with_vlac", "type": "function", "description": "One-shot grasp + shared D435i Before/After + VLAC critic/verification. Returns execution_success, reward, done; VLAC failure is non-fatal to grasp execution."},
             {"name": "grasp_target", "type": "function", "description": "Fixed-pattern arm grasp (wraps IK internally); 需要显式给 right_pos/left_pos base 坐标"},
             {"name": "release_object", "type": "function", "description": "Release grasped object: home + open dexterous hand"},
             {"name": "Pose", "type": "class (memory_sdk)", "description": "Lightweight pose helper for memory upsert/query (x, y, z, yaw, ...)"},
@@ -431,7 +432,7 @@ async def get_sdk_markdown():
     # Render markdown to HTML using zero-dependency approach
     import html as html_mod
     import re
-    
+
     raw_md = md
 
     # Convert markdown to HTML (lightweight, no external deps)

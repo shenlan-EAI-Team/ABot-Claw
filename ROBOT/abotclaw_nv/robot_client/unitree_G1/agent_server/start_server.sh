@@ -28,6 +28,9 @@ fi
 HOST="${G1_HOST:-0.0.0.0}"
 PORT="${G1_PORT:-8888}"
 NETWORK_INTERFACE="${G1_NETWORK_INTERFACE:-eno1}"
+# VLAC service
+export VLAC_URL="${VLAC_URL:-http://192.168.31.190:8014}"
+export VLAC_REQUEST_TIMEOUT="${VLAC_REQUEST_TIMEOUT:-120}"
 
 # Keep all DDS/Unitree SDK call sites on the same robot-facing NIC.
 export G1_NETWORK_INTERFACE="$NETWORK_INTERFACE"
