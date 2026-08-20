@@ -24,7 +24,7 @@ description: Compose multiple verified G1 primitives into one conditional sequen
 1. 不要为了抓取任务自动插入 `detect_object` 步骤。
 2. 不要使用 D455 的检测结果判断 D435i 抓取目标是否存在。
 3. `grasp_something` / `grasp_with_vlac` 会在 Robot 端自行使用 D435i + AnyGrasp 完成抓取目标检测和位姿生成。
-4. 当 `execution_success=false` 且没有明确错误字段时，不得猜测为“D455 未检测到瓶子”或“AnyGrasp 未生成姿态”。
+4. 当 `execution_success=false` 且没有明确错误字段时，不得自行猜测具体失败原因，例如“D435i 未检测到目标”“AnyGrasp 未生成抓取姿态”或“机械臂执行失败”。
 5. 此时应返回“抓取阶段失败，需查看 Robot Agent Server 底层抓取日志”。
 ## 执行方法
 
